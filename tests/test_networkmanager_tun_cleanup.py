@@ -226,6 +226,113 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
             ), self.assertRaises(NetworkManagerTunCleanupError):
                 remove_stale_tun_connections()
 
+    def test_main_register_without_adoption_exits_nonzero_without_registry(self) -> None:
+        # T-PR23-12: a helper that could not confirm NetworkManager adoption
+        # must not report success, and must not create or keep a registry.
+        with self._patched_registry(), patch.object(
+            nm_tun_cleanup.sys, "argv", ["python-module-wrapper", "register"]
+        ), patch("drivers.networkmanager_tun_cleanup.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            self.assertEqual(nm_tun_cleanup.main(), 1)
+
+        self.assertFalse(self.registry_path.exists())
+
+    def test_main_register_with_confirmed_adoption_exits_zero_and_records(self) -> None:
+        listing = f"{UUID_ONE}:wdvpn-tun0:tun:wdvpn-tun0\n"
+
+        with self._patched_registry(), patch.object(
+            nm_tun_cleanup.sys, "argv", ["python-module-wrapper", "register"]
+        ), patch("drivers.networkmanager_tun_cleanup.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=listing, stderr="")
+            self.assertEqual(nm_tun_cleanup.main(), 0)
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
+
+    def test_ambiguous_adoption_fails_closed_and_drops_registry(self) -> None:
+        listing = "\n".join((
+            f"{UUID_ONE}:wdvpn-tun0:tun:wdvpn-tun0",
+            f"{UUID_TWO}:wdvpn-tun0:tun:wdvpn-tun0",
+        ))
+        self.registry_dir.mkdir(mode=0o700)
+        self.registry_path.write_text(f"{UUID_ONE}\n", encoding="ascii")
+        self.registry_path.chmod(0o600)
+
+        with self._patched_registry(), patch(
+            "drivers.networkmanager_tun_cleanup.subprocess.run"
+        ) as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=listing, stderr="")
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                record_active_tun_connection()
+
+        self.assertFalse(self.registry_path.exists())
+        self.assertFalse(
+            any("delete" in call.args[0] for call in run.call_args_list)
+        )
+
+    def test_corrupt_registry_is_rejected_without_any_nm_delete(self) -> None:
+        self.registry_dir.mkdir(mode=0o700)
+        self.registry_path.write_text("not-a-uuid\n", encoding="ascii")
+        self.registry_path.chmod(0o600)
+
+        with self._patched_registry(), patch(
+            "drivers.networkmanager_tun_cleanup.subprocess.run"
+        ) as run:
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                remove_stale_tun_connections()
+
+        self.assertEqual(run.call_count, 0)
+
+    def test_delete_failure_preserves_registry_for_retry(self) -> None:
+        self.registry_dir.mkdir(mode=0o700)
+        self.registry_path.write_text(f"{UUID_ONE}\n", encoding="ascii")
+        self.registry_path.chmod(0o600)
+        listing = f"{UUID_ONE}:wdvpn-tun0:tun\n"
+
+        with self._patched_registry(), patch(
+            "drivers.networkmanager_tun_cleanup.subprocess.run"
+        ) as run:
+            run.side_effect = [
+                subprocess.CompletedProcess([], 0, stdout=listing, stderr=""),
+                subprocess.CompletedProcess([], 1, stdout="", stderr="failed"),
+            ]
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                remove_stale_tun_connections()
+
+        self.assertTrue(self.registry_path.exists())
+
+    def test_created_registry_parent_clears_inherited_setgid(self) -> None:
+        # The shared state directory is setgid (2770), so a subdirectory created
+        # under it inherits the group and the setgid bit. The registry directory
+        # must end up exactly root-owned 0700 or the cleanup path rightly refuses
+        # it. Reproduced on the real nls1 host.
+        base = Path(self.tmpdir.name) / "setgid-state"
+        base.mkdir(mode=0o700)
+        os.chmod(base, 0o2770)
+        registry_path = base / "nm-tun" / "owned-uuid"
+
+        with patch.multiple(
+            "drivers.networkmanager_tun_cleanup",
+            OWNED_UUIDS_PATH=registry_path,
+            EXPECTED_REGISTRY_UID=os.getuid(),
+            EXPECTED_REGISTRY_GID=os.getgid(),
+            EXPECTED_REGISTRY_DIR_MODE=0o700,
+            EXPECTED_REGISTRY_FILE_MODE=0o600,
+        ), patch("drivers.networkmanager_tun_cleanup.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess(
+                [], 0, stdout=f"{UUID_ONE}:wdvpn-tun0:tun:wdvpn-tun0\n", stderr=""
+            )
+            nm_tun_cleanup._write_owned_uuid_registry(UUID_ONE)
+
+        parent_mode = (base / "nm-tun").stat().st_mode & 0o7777
+        self.assertEqual(parent_mode, 0o700)
+
+    def test_owned_uuid_path_is_durable_outside_run(self) -> None:
+        self.assertEqual(
+            str(nm_tun_cleanup.OWNED_UUIDS_PATH),
+            "/var/lib/watchdogvpn/nm-tun/owned-uuid",
+        )
+        self.assertFalse(str(nm_tun_cleanup.OWNED_UUIDS_PATH).startswith("/run/"))
+
     def _patched_registry(self):
         return patch.multiple(
             "drivers.networkmanager_tun_cleanup",

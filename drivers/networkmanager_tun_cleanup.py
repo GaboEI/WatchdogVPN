@@ -11,7 +11,11 @@ from uuid import UUID
 
 CONNECTION_NAME = "wdvpn-tun0"
 CONNECTION_TYPE = "tun"
-OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")
+# The ownership registry must survive a reboot: a NetworkManager profile is
+# persistent, so an authority stored under the volatile /run tmpfs could not
+# authorise its later cleanup. It lives in the root-only state tree instead,
+# readable and writable only by the fixed root helper (never by the daemon).
+OWNED_UUIDS_PATH = Path("/var/lib/watchdogvpn/nm-tun/owned-uuid")
 EXPECTED_REGISTRY_UID = 0
 EXPECTED_REGISTRY_GID = 0
 EXPECTED_REGISTRY_DIR_MODE = 0o700
@@ -34,8 +38,14 @@ def record_active_tun_connection() -> bool:
         if name == CONNECTION_NAME and connection_type == CONNECTION_TYPE and device == CONNECTION_NAME
     ]
     if len(connection_uuids) > 1:
+        # Ownership cannot be attributed to exactly one adopted connection, so
+        # no registry may be kept: a stale entry would later authorise deleting
+        # a profile this attempt cannot prove it owns.
+        _remove_owned_uuid_registry()
         raise NetworkManagerTunCleanupError("ambiguous WatchdogVPN NetworkManager TUN ownership")
     if not connection_uuids:
+        # NetworkManager did not adopt the TUN: there is no confirmed
+        # ownership, so no registry may be created or kept.
         _remove_owned_uuid_registry()
         return False
     _write_owned_uuid_registry(connection_uuids[0])
@@ -191,11 +201,27 @@ def _ensure_registry_parent() -> None:
             parent_stat = OWNED_UUIDS_PATH.parent.lstat()
         except FileNotFoundError:
             OWNED_UUIDS_PATH.parent.mkdir(mode=EXPECTED_REGISTRY_DIR_MODE, parents=True, exist_ok=False)
+            _claim_registry_parent_ownership()
         else:
             if not stat.S_ISDIR(parent_stat.st_mode):
                 raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership directory")
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot prepare WatchdogVPN NetworkManager TUN ownership directory") from exc
+
+
+def _claim_registry_parent_ownership() -> None:
+    # The shared state directory /var/lib/watchdogvpn is setgid (2770), so a
+    # freshly created subdirectory inherits both the watchdogvpn group and the
+    # setgid bit instead of a plain 0700 root directory. The registry must be
+    # a root-owned, root-only authority; set the exact owner and mode here so
+    # the directory passes the same validation the cleanup path enforces. A
+    # failure is not swallowed into a weaker mode: the later descriptor
+    # validation fails closed on anything unsafe.
+    try:
+        os.chown(OWNED_UUIDS_PATH.parent, EXPECTED_REGISTRY_UID, EXPECTED_REGISTRY_GID)
+    except (AttributeError, PermissionError):
+        pass
+    os.chmod(OWNED_UUIDS_PATH.parent, EXPECTED_REGISTRY_DIR_MODE)
 
 
 def _open_registry_parent() -> int:
@@ -259,7 +285,12 @@ def main() -> int:
     try:
         mode = sys.argv[1] if len(sys.argv) > 1 else Path(sys.argv[0]).name
         if mode == "register" or mode.endswith("register"):
-            record_active_tun_connection()
+            # A register helper that cannot confirm NetworkManager adoption must
+            # exit non-zero: its caller (the sing-box driver via systemd) treats
+            # exit 0 as "ownership recorded" and would otherwise proceed with an
+            # unprotected NetworkManager-managed TUN.
+            if not record_active_tun_connection():
+                return 1
         elif mode == "cleanup" or mode.endswith("cleanup"):
             remove_stale_tun_connections()
         else:

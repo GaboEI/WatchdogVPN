@@ -92,6 +92,32 @@ external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
 
+## NetworkManager Lifecycle State
+
+When NetworkManager manages the active network, WatchdogVPN records the
+identity of the TUN connection it owns so it can later delete exactly that
+profile without touching connections it does not own.
+
+- The ownership registry lives root-owned and root-only at
+  `/var/lib/watchdogvpn/nm-tun/owned-uuid`, outside the daemon-writable `/run`
+  and outside the daemon's group state, so the authority survives a reboot
+  because a NetworkManager profile is persistent. A malformed, ambiguous,
+  symlinked, wrongly-owned or non-root-owned registry is rejected and no
+  NetworkManager profile is deleted; a connection is deleted only when its UUID
+  matches the recorded owner and its name and type still match.
+- The registration helper exits non-zero when NetworkManager did not adopt the
+  TUN, so a caller that only checks the helper exit status never treats an
+  unconfirmed adoption as recorded ownership.
+- NetworkManager DNS restoration uses the immutable root-only snapshot at
+  `/var/lib/watchdogvpn/nm-dns-restore/snapshot.json` through the fixed root
+  helper. When that snapshot is absent but a legacy runtime snapshot exists,
+  the helper restores from the legacy state only when the file is root-owned
+  and not group- or other-writable, so the unprivileged daemon cannot forge the
+  DNS values that root applies. The installer promotes (migrates) a legacy
+  snapshot into the root authority so a pre-existing install keeps its restore
+  ability across the upgrade. An absent, corrupt or untrusted snapshot fails
+  with an actionable error and no DNS mutation.
+
 ## Kill Switch Scope
 
 The kill switch is a system-wide fail-closed firewall guard for WatchdogVPN's

@@ -1216,10 +1216,15 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         rule_prefs, route_tables = self._discover_singbox_tun_residue(
             include_orphaned_auto_route_rule=True,
         )
-        if not rule_prefs and not route_tables and not self._tun_interface_exists():
+        if rule_prefs or route_tables:
+            self._tun_cleanup_rule_prefs = rule_prefs
+            self._tun_cleanup_route_tables = route_tables
+        # A retained cleanup state means a previous NetworkManager cleanup
+        # failed after its rule/route residue was already removed: retry the
+        # ownership-safe teardown instead of declaring the host clean.
+        retry_pending = bool(self._tun_cleanup_rule_prefs or self._tun_cleanup_route_tables)
+        if not retry_pending and not self._tun_interface_exists():
             return
-        self._tun_cleanup_rule_prefs = rule_prefs
-        self._tun_cleanup_route_tables = route_tables
         self._cleanup_tun_residue()
 
     def _cleanup_tun_residue(self) -> bool:
@@ -1239,7 +1244,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 self._run_cleanup_command(["ip", "route", "flush", "table", table])
                 self._run_cleanup_command(["ip", "-6", "route", "flush", "table", table])
         networkmanager_cleanup_ok = self._forget_networkmanager_tun_connection()
-        self._clear_tun_cleanup_state()
+        # Only discard the captured cleanup state once the ownership-safe
+        # NetworkManager teardown is confirmed. On failure the state is kept so
+        # a later retry can finish the cleanup without restarting the daemon or
+        # touching a resource this driver does not own. The rule/route deletes
+        # above are idempotent, so a retry that repeats them is harmless.
+        if networkmanager_cleanup_ok:
+            self._clear_tun_cleanup_state()
         return networkmanager_cleanup_ok
 
     def _networkmanager_state(self) -> str:

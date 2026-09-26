@@ -125,6 +125,7 @@ install_runtime_files() {
     0644
   install_systemd_units
   prepare_networkmanager_dns_restore_state
+  prepare_networkmanager_tun_cleanup_state
 }
 
 prepare_networkmanager_dns_restore_state() {
@@ -135,6 +136,26 @@ prepare_networkmanager_dns_restore_state() {
   if root_path_exists "$state_dir/snapshot.json"; then
     run_step sudo chown root:root "$state_dir/snapshot.json"
     run_step sudo chmod 0600 "$state_dir/snapshot.json"
+  fi
+  # Promote a legacy runtime DNS snapshot into the durable root-only restore
+  # authority so a pre-existing install keeps its restore ability across the
+  # upgrade. It is a no-op when a root snapshot already exists or when no
+  # legacy NetworkManager snapshot can be derived.
+  run_step sudo /usr/local/bin/watchdogvpn-nm-dns-restore migrate
+}
+
+# The NetworkManager TUN ownership registry must outlive a reboot because the
+# NM profile it authorises is persistent. It lives root-owned and root-only in
+# the durable state tree, outside the daemon-controlled /run, so the fixed root
+# helper can read it after a reboot while the daemon never can.
+prepare_networkmanager_tun_cleanup_state() {
+  local state_dir="/var/lib/watchdogvpn/nm-tun"
+  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
+  run_step sudo chmod g-s "$state_dir"
+  run_step sudo chmod 0700 "$state_dir"
+  if root_path_exists "$state_dir/owned-uuid"; then
+    run_step sudo chown root:root "$state_dir/owned-uuid"
+    run_step sudo chmod 0600 "$state_dir/owned-uuid"
   fi
 }
 
