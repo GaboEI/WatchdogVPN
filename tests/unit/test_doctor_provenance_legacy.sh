@@ -150,3 +150,35 @@ assert_contains "$ROOT_DIR/update.sh" "if (( doctor_preflight_rc != 0 )); then" 
 assert_contains "$ROOT_DIR/update.sh" "if grep -Fxq 'LEGACY_MIGRATABLE=1' <<<\"\$doctor_preflight_output\"; then" "updater must continue only on the recognised legacy signal"
 
 echo "update preflight boundary checks passed"
+
+# ---------------------------------------------------------------------------
+# F-06: a preserved legacy marker with no installed runtime must NOT be
+# reported as a migratable installation. installed_runtime_present() is the
+# gate; prove it is false when no product binary exists and that doctor.sh
+# consults it.
+# ---------------------------------------------------------------------------
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'installed_runtime_present()' "version_marker must define an installed-runtime presence check"
+assert_contains "$ROOT_DIR/doctor.sh" 'elif ! installed_runtime_present; then' "doctor must gate the legacy signal on an installed runtime being present"
+assert_contains "$ROOT_DIR/doctor.sh" 'only a preserved version marker is present; no installed runtime detected' "doctor must explain a lone preserved marker"
+
+# Behavioural: with no product binaries on PATH-ish standard locations, the
+# helper must return non-zero. Run in a subshell with a stubbed check by
+# sourcing the lib and overriding nothing but relying on the real filesystem;
+# use the lib function directly against a fake root via its fixed paths is not
+# possible, so assert the predicate logic on the current host is consistent:
+# if all five binaries are absent then the helper must fail (return 1).
+binaries_present=0
+for b in /usr/local/bin/watchdog /usr/local/bin/watchdogvpn /usr/local/bin/watchdogvpn-daemon /usr/local/bin/vpnctl /usr/local/bin/vpn_truth_check; do
+  [[ -e "$b" ]] && binaries_present=1
+done
+set +e
+( . "$ROOT_DIR/lib/common.sh" 2>/dev/null || true; . "$ROOT_DIR/lib/version_marker.sh"; installed_runtime_present )
+pred_rc=$?
+set -e
+if (( binaries_present == 0 )); then
+  [[ "$pred_rc" -ne 0 ]] || { printf 'FAIL: installed_runtime_present must be false with no binaries\n' >&2; exit 1; }
+else
+  [[ "$pred_rc" -eq 0 ]] || { printf 'FAIL: installed_runtime_present must be true when binaries exist\n' >&2; exit 1; }
+fi
+
+echo "residual-marker detection checks passed"
