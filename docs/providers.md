@@ -29,6 +29,26 @@ Dangerous executable directives, external file references and non-global
 endpoints are rejected before the profile is stored. See the security document
 for the exact restrictions and process-isolation guarantees.
 
+## Subscription Refresh Semantics
+
+A provider refresh is transactional. WatchdogVPN replaces a provider's node set
+only when the incoming set is complete and valid:
+
+- if the parser rejects any node in the response, the refresh is treated as
+  incomplete and the previously stored provider nodes are preserved exactly;
+- a partial, failed or malformed response never removes or overwrites an
+  existing provider node;
+- a complete, fully accepted response replaces the provider membership exactly,
+  including nodes the provider has intentionally retired;
+- nodes that persist keep their local enable, rotation-pool and health state;
+- manual profiles and profiles owned by another provider are never touched.
+
+When a provider serves different formats per User-Agent, negotiation keeps the
+best candidate that any User-Agent produced; a later failed attempt (timeout,
+network error or unparseable body) does not discard an already valid candidate.
+A negotiation that yields no valid candidate fails with an error that does not
+echo the subscription URL or token.
+
 ## Resilient vs Compatibility Profiles
 
 Providers should not flatten all protocols into the same marketing category.
