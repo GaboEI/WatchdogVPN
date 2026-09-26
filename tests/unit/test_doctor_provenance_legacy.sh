@@ -38,30 +38,44 @@ run_doctor() {
   printf '\n---\n%s' "$out"
 }
 
-# Recognised legacy install: a legacy marker exists, no schema-2/H1 provenance.
+# Recognised legacy marker. The outcome depends on whether an installed runtime
+# (a product binary) is present on this host: with a runtime, doctor warns and
+# signals LEGACY_MIGRATABLE=1; without a runtime, doctor reports a lone
+# preserved marker and signals 0 (F-06). Both are correct; assert whichever the
+# host's state implies, and never the inverse.
 printf 'commit=cafebabecafebabecafebabecafebabecafebabe\ninstalled_at=2026-01-01T00:00:00Z\n' >"$tmp/legacy-installed-version"
 legacy_result="$(run_doctor)"
 legacy_out="${legacy_result#*$'\n---'$'\n'}"
-grep -Fq '[WARN] installed runtime uses a legacy layout without schema-2 hashed provenance' <<<"$legacy_out" || {
-  printf 'FAIL: recognised legacy layout must be reported as a migratable warning\n' >&2
-  printf '%s\n' "$legacy_out" >&2
-  exit 1
-}
+runtime_present=0
+for b in /usr/local/bin/watchdog /usr/local/bin/watchdogvpn /usr/local/bin/watchdogvpn-daemon /usr/local/bin/vpnctl /usr/local/bin/vpn_truth_check; do
+  [[ -e "$b" ]] && runtime_present=1
+done
+legacy_signal="$(grep -o 'LEGACY_MIGRATABLE=[01]' <<<"$legacy_out" | tail -1)"
+legacy_fails="$(grep -oE 'FAIL=[0-9]+' <<<"$legacy_out" | tail -1)"
+if (( runtime_present == 1 && legacy_fails == 0 )); then
+  grep -Fq '[WARN] installed runtime uses a legacy layout without schema-2 hashed provenance' <<<"$legacy_out" || {
+    printf 'FAIL: with a runtime, a recognised legacy layout must be a migratable warning\n' >&2
+    printf '%s\n' "$legacy_out" >&2
+    exit 1
+  }
+  [[ "$legacy_signal" == "LEGACY_MIGRATABLE=1" ]] || {
+    printf 'FAIL: with a runtime, legacy-only must emit LEGACY_MIGRATABLE=1\n' >&2
+    printf '%s\n' "$legacy_out" >&2; exit 1; }
+else
+  grep -Fq 'only a preserved version marker is present; no installed runtime detected' <<<"$legacy_out" || {
+    printf 'FAIL: without a runtime, a lone preserved marker must be reported as no installed runtime\n' >&2
+    printf '%s\n' "$legacy_out" >&2
+    exit 1
+  }
+  [[ "$legacy_signal" == "LEGACY_MIGRATABLE=0" ]] || {
+    printf 'FAIL: without a runtime, the legacy signal must be 0\n' >&2
+    printf '%s\n' "$legacy_out" >&2; exit 1; }
+fi
 grep -Fq 'no attributable hashed provenance' <<<"$legacy_out" && {
   printf 'FAIL: recognised legacy layout must not be reported as a missing-provenance failure\n' >&2
   printf '%s\n' "$legacy_out" >&2
   exit 1
 } || true
-# The legacy signal is what the updater keys on. On a host whose only issue is
-# legacy it must be 1; on a host with additional unrelated failures doctor
-# forces it to 0 (tested below and in the CI-exposed suppression case).
-legacy_signal="$(grep -o 'LEGACY_MIGRATABLE=[01]' <<<"$legacy_out" | tail -1)"
-legacy_fails="$(grep -oE 'FAIL=[0-9]+' <<<"$legacy_out" | tail -1)"
-if [[ "$legacy_fails" == "FAIL=0" && "$legacy_signal" != "LEGACY_MIGRATABLE=1" ]]; then
-  printf 'FAIL: legacy-only host must emit LEGACY_MIGRATABLE=1\n' >&2
-  printf '%s\n' "$legacy_out" >&2
-  exit 1
-fi
 if [[ "$legacy_fails" != "FAIL=0" && "$legacy_signal" != "LEGACY_MIGRATABLE=0" ]]; then
   printf 'FAIL: legacy signal must be 0 when other failures are present\n' >&2
   printf '%s\n' "$legacy_out" >&2
