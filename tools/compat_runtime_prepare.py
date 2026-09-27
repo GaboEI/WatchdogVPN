@@ -156,11 +156,16 @@ def _source_build_candidates(manifest):
             yield candidate
 
 
-def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str, release_resolver=None) -> None:
+def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str, release_resolver=None, *, defer_release_resolution: bool = False) -> None:
     for candidate in _source_build_candidates(manifest):
+        # Recovery must not resolve live upstream releases before it can bind to
+        # the exact pair persisted in the interrupted journal; deferring the
+        # resolution leaves the executor's components empty so the engine's
+        # recovery binds them from that journal instead.
+        components = () if defer_release_resolution else components_from_candidate(candidate, release_resolver=release_resolver)
         executor = AmneziaWGUserspaceSourceBuildExecutor(
             method_id=candidate["id"],
-            components=components_from_candidate(candidate, release_resolver=release_resolver),
+            components=components,
             build_user=build_user,
             workspace_root=Path(args.workspace_root),
             workspace_authority_root=Path(args.workspace_authority_root) if getattr(args, "workspace_authority_root", None) else None,
@@ -219,7 +224,7 @@ def _validate_workspace_arguments(args) -> None:
             raise ValueError("workspace root component %s is not a directory" % current)
 
 
-def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=None) -> engine.ProvisioningEnvironment:
+def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=None, defer_release_resolution: bool = False) -> engine.ProvisioningEnvironment:
     if mutating:
         if not args.build_user:
             raise ValueError("--build-user is required for mutating provisioning commands")
@@ -227,7 +232,7 @@ def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=Non
     else:
         build_user = args.build_user or _default_plan_user()
     registry = TrustedExecutorRegistry()
-    _register_source_build_executors(registry, manifest, args, build_user, release_resolver=release_resolver)
+    _register_source_build_executors(registry, manifest, args, build_user, release_resolver=release_resolver, defer_release_resolution=defer_release_resolution)
     context = ExecutionContext(
         allowed_roots=(Path(args.install_root),),
         forbidden_roots=(),
@@ -276,7 +281,10 @@ def cmd_prepare(args) -> int:
 
 def cmd_recover(args) -> int:
     manifest, decision = _context(args)
-    env = _build_env(args, manifest, decision, mutating=True)
+    # Defer release resolution: recovery binds to the exact release pair
+    # persisted in each interrupted transaction's own journal, so it must never
+    # contact the official-release resolver first.
+    env = _build_env(args, manifest, decision, mutating=True, defer_release_resolution=True)
     reports = engine.recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=env.global_lock_root)
     _print([{"transaction_id": item.transaction_id, "action": item.action.value, "reason": item.reason} for item in reports])
     return 0

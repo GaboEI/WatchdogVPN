@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 from compat.provisioning.errors import ExecutorNotRegisteredError, PathPolicyError, ProvisioningError
 from compat.provisioning.journal import StepRecord
@@ -44,6 +44,9 @@ from compat.provisioning.paths import (
     validate_identifier,
     validate_target_path,
 )
+
+if TYPE_CHECKING:
+    from compat.provisioning.journal import TransactionJournal
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,20 @@ class Executor(abc.ABC):
         for what a persisted ``OwnershipRecord`` must match; it never
         hardcodes executor-specific assumptions (e.g. "artifact_type is
         always file", "source is always None") itself."""
+
+    def recovery_bound_executor(self, journal: "TransactionJournal") -> "Executor":
+        """Return the executor recovery must use to rebuild this journal's plan.
+
+        Executors whose plan depends on externally resolved state (for example
+        the exact official AmneziaWG release pair) MUST override this and
+        reconstruct that state from the authoritative interrupted journal
+        itself -- never by re-resolving live upstream state -- and MUST fail
+        closed (raise ``ProvisioningError``) when the journal cannot supply a
+        complete, valid state. The default returns ``self`` unchanged, which is
+        correct for executors whose plan depends only on their own code and the
+        journal's persisted step intents.
+        """
+        return self
 
     def declares_network_required(self) -> bool:
         return False

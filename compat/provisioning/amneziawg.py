@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import hashlib
 import os
@@ -9,9 +10,9 @@ from pathlib import Path
 import pwd
 import shutil
 import stat as stat_module
-from typing import Mapping, Protocol
+from typing import Mapping, Protocol, Sequence
 
-from compat.provisioning.errors import PathPolicyError
+from compat.provisioning.errors import PathPolicyError, ProvisioningError
 from compat.provisioning.executors import ExecutionContext, Executor, handle_for_allowed_root
 from compat.provisioning.journal import StepRecord
 from compat.provisioning.model import (
@@ -119,6 +120,29 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
 
     def step_is_replay_safe(self, step: StepRecord) -> bool:
         return True
+
+    def recovery_bound_executor(self, journal) -> "AmneziaWGUserspaceSourceBuildExecutor":
+        """Rebuild this executor from the exact release pair the interrupted
+        transaction journal persisted, never from live upstream resolution.
+
+        The journal's own step intents carry the exact repository/tag/revision
+        resolved when the transaction was prepared; recovery must use those
+        pins so it reconstructs the same plan deterministically even when the
+        upstream ``latest`` release changed, is unavailable, or offline. An
+        incomplete, duplicated, swapped or non-official journal pair fails
+        closed before any provisioning mutation.
+        """
+        components = _components_from_journal_steps(journal.steps)
+        if components is None:
+            raise ProvisioningError(
+                "interrupted transaction journal does not carry a complete, official, "
+                "self-consistent AmneziaWG release pair; recovery must fail closed rather "
+                "than substitute a freshly resolved upstream release"
+            )
+        bound = copy.copy(self)
+        bound.components = components
+        bound._built_outputs = {}
+        return bound
 
     def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext) -> tuple[ProvisioningStep, ...]:
         validate_identifier(capability_id, field="capability_id")
@@ -472,6 +496,56 @@ def components_from_candidate(
             )
         )
     return tuple(components)
+
+
+def _components_from_journal_steps(steps: Sequence) -> tuple[SourceComponent, ...] | None:
+    """Reconstruct the exact source components a prepare journal persisted.
+
+    Reads only the journal's own persisted step intents (repository/tag/
+    revision and component/output identity). Returns ``None`` when the journal
+    does not carry a complete, official and self-consistent pair, so the caller
+    fails closed instead of resolving live upstream state.
+    """
+    seen_outputs: set[str] = set()
+    per_component: dict[str, dict[str, str]] = {}
+    outputs_by_component: dict[str, list[str]] = {}
+    for step in steps:
+        intent = step.intent
+        component_id = intent.get("component_id")
+        repository = intent.get("repository")
+        tag = intent.get("tag")
+        revision = intent.get("revision")
+        output_name = intent.get("output_name")
+        if component_id not in _OFFICIAL_RELEASE_REPOSITORY:
+            return None
+        official_repository = "https://github.com/%s" % _OFFICIAL_RELEASE_REPOSITORY[component_id]
+        if repository != official_repository:
+            return None
+        if not isinstance(tag, str) or not tag or not isinstance(revision, str) or not revision:
+            return None
+        if not isinstance(output_name, str) or not output_name or output_name in seen_outputs:
+            return None
+        seen_outputs.add(output_name)
+        record = per_component.setdefault(
+            component_id, {"repository": repository, "tag": tag, "revision": revision}
+        )
+        if (record["repository"], record["tag"], record["revision"]) != (repository, tag, revision):
+            return None
+        outputs_by_component.setdefault(component_id, []).append(output_name)
+    if set(per_component) != set(_OFFICIAL_RELEASE_REPOSITORY):
+        return None
+    if set(seen_outputs) != set(AMNEZIAWG_OUTPUTS):
+        return None
+    return tuple(
+        SourceComponent(
+            component_id=component_id,
+            repository=per_component[component_id]["repository"],
+            tag=per_component[component_id]["tag"],
+            revision=per_component[component_id]["revision"],
+            expected_outputs=tuple(outputs_by_component[component_id]),
+        )
+        for component_id in ("amneziawg_tools", "amneziawg_transport")
+    )
 
 
 def _validate_build_user(build_user: str) -> str:
