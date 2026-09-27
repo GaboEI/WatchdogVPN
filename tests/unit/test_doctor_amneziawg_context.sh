@@ -28,6 +28,13 @@ if [[ "$(run_profiles_present 1)" != "present" ]]; then
   fail "amneziawg_profiles_present must be present when WATCHDOGVPN_AWG_PROFILE_COUNT=1"
 fi
 
+# 2b. Unverified inventory (CLI passes "unknown" when the profile store cannot
+#     be inspected): the context must NOT be suppressed as if the count were 0,
+#     so potentially existing AmneziaWG profiles are never hidden (T-PR23-07).
+if [[ "$(run_profiles_present unknown)" != "present" ]]; then
+  fail "amneziawg_profiles_present must not treat an unknown profile count as 0/absent"
+fi
+
 # 3. Without the env var, a profiles file with an AWG profile must be detected.
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT

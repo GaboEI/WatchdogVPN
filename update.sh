@@ -141,11 +141,9 @@ require_supported_distro() {
     elif distro_experimental_override_accepted; then
       warn "experimental distro override: previously accepted by you for ${DISTRO_NAME} (${DISTRO_ID})"
     elif ((ACCEPT_EXPERIMENTAL_DISTRO_RISK == 1)); then
-      distro_record_experimental_override
-      warn "experimental distro override: risk accepted via --accept-experimental-distro-risk for ${DISTRO_NAME} (${DISTRO_ID})"
+      distro_record_experimental_override "via --accept-experimental-distro-risk"
     elif [[ -t 0 ]] && prompt_experimental_distro_override; then
-      distro_record_experimental_override
-      warn "experimental distro override: you accepted the risk for ${DISTRO_NAME} (${DISTRO_ID})"
+      distro_record_experimental_override "after interactive confirmation"
     else
       print_future_distro
       exit 1

@@ -1900,27 +1900,61 @@ def _panic_script_path(value: str | None) -> Path:
     return script
 
 
+_PROFILE_INVENTORY_UNVERIFIED_WARNING = (
+    "profile inventory could not be inspected ({reason}); doctor.sh diagnostics still "
+    "run, but the AmneziaWG contextual diagnosis is inconclusive and the AmneziaWG "
+    "profile count is unknown, not zero. Check that the profile store is readable and "
+    "not corrupt, then rerun watchdog doctor."
+)
+
+
+def _doctor_awg_profile_count() -> tuple[int | None, str | None]:
+    """Count persisted AmneziaWG profiles, or explain why the inventory is unknown.
+
+    This count only feeds the doctor context. Expected storage, read and
+    corruption failures are absorbed here so they can never block doctor.sh from
+    running; on failure the count is reported as unknown (never zero, which would
+    hide potentially existing AmneziaWG profiles).
+    """
+    try:
+        count = sum(
+            1 for profile in ProfileStore().list() if profile.protocol is ProtocolType.AMNEZIAWG
+        )
+    except (OSError, PersistentStoreError, ValueError, KeyError, TypeError) as exc:
+        return None, _PROFILE_INVENTORY_UNVERIFIED_WARNING.format(reason=type(exc).__name__)
+    return count, None
+
+
 def _doctor(args: argparse.Namespace) -> int:
     script = _doctor_script_path(args.doctor_script)
     command = [str(script)]
     env = os.environ.copy()
-    env["WATCHDOGVPN_AWG_PROFILE_COUNT"] = str(
-        sum(1 for profile in ProfileStore().list() if profile.protocol is ProtocolType.AMNEZIAWG)
-    )
+    awg_profile_count, profile_inventory_warning = _doctor_awg_profile_count()
+    if awg_profile_count is None:
+        env["WATCHDOGVPN_AWG_PROFILE_COUNT"] = "unknown"
+    else:
+        env["WATCHDOGVPN_AWG_PROFILE_COUNT"] = str(awg_profile_count)
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
         exit_code = _normalize_exit_code(int(completed.returncode))
-        _print_json(
-            {
-                "command": command,
-                "doctor_exit_code": exit_code,
-                "doctor_stdout": completed.stdout,
-                "doctor_stderr": completed.stderr,
-                "read_only": True,
-                "mutates_runtime": False,
-            }
-        )
+        payload: dict[str, object] = {
+            "command": command,
+            "doctor_exit_code": exit_code,
+            "doctor_stdout": completed.stdout,
+            "doctor_stderr": completed.stderr,
+            "read_only": True,
+            "mutates_runtime": False,
+            "amneziawg_profile_count": (
+                "unknown" if awg_profile_count is None else awg_profile_count
+            ),
+            "profile_inventory": "unverified" if awg_profile_count is None else "verified",
+        }
+        if profile_inventory_warning is not None:
+            payload["warnings"] = [profile_inventory_warning]
+        _print_json(payload)
         return exit_code
+    if profile_inventory_warning is not None:
+        print(f"Warning: {profile_inventory_warning}", file=sys.stderr)
     if bool(getattr(args, "no_color", False)):
         env["NO_COLOR"] = "1"
     completed = subprocess.run(command, check=False, env=env)
