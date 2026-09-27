@@ -3683,23 +3683,30 @@ def _awg_rollback(args: argparse.Namespace) -> int:
 def _awg_verify(args: argparse.Namespace) -> int:
     probe = probe_runtime()
     awg_profiles = _awg_profile_count()
-    if not probe.all_present:
+    if not probe.runtime_available:
         data = {
             "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "runtime_available": False,
             "recorded": False,
             "verified": False,
-            "reason": "AmneziaWG runtime is incomplete; execute the recipe first, then re-run verify.",
+            "reason": "AmneziaWG runtime is not available; execute the recipe first, then re-run verify.",
             "probe": probe.as_dict(),
         }
         if args.json:
             _print_json(data)
             return 0
-        print("AmneziaWG runtime is incomplete; execute the recipe first, then re-run `watchdog awg verify`.")
+        print("AmneziaWG runtime is not available; execute the recipe first, then re-run `watchdog awg verify`.")
         return 0
+    # A runtime can be available without the complete official userspace artifact
+    # set (for example a kernel-backed runtime with `awg` + `awg-quick` and the
+    # loaded module but no `amneziawg-go`). Availability is reported as-is, and
+    # verification is decided only by the build/provenance evidence below --
+    # never by a contradictory "runtime is incomplete" claim.
     pending = load_pending_releases()
     if not pending:
         data = {
             "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "runtime_available": True,
             "recorded": False,
             "verified": False,
             "reason": "No pending recipe to verify. Run `watchdog awg setup` and execute its exact recipe first.",
@@ -3723,6 +3730,7 @@ def _awg_verify(args: argparse.Namespace) -> int:
         # alone.
         data = {
             "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "runtime_available": True,
             "recorded": False,
             "verified": False,
             "provenance": "unknown",
@@ -3743,6 +3751,7 @@ def _awg_verify(args: argparse.Namespace) -> int:
     report = verification_report(probe)
     data = {
         "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+        "runtime_available": True,
         "recorded": True,
         "verified": True,
         "recorded_releases": [entry.as_dict() for entry in recorded],

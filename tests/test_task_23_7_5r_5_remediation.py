@@ -11,16 +11,19 @@ or fails closed) and a positive proof (the supported behavior still works).
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import json
 import os
-from contextlib import contextmanager
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest import mock
 
+from cli.main import _awg_verify
 from compat.dependency_resolution import ResolutionDecision
 from compat.provisioning import engine, journal as journal_mod
 from compat.provisioning.amneziawg import (
@@ -39,10 +42,13 @@ from diagnostics import amneziawg_lifecycle as lifecycle
 from diagnostics.amneziawg_lifecycle import (
     AMNEZIAWG_TOOLS_REPO,
     AMNEZIAWG_TRANSPORT_REPO,
+    STATE_PROFILE_AVAILABLE,
     InstalledRelease,
     ResolvedRelease,
     RuntimeComponent,
     RuntimeProbe,
+    load_pending_releases,
+    store_pending_releases,
 )
 
 
@@ -584,6 +590,132 @@ class TPR2310DeferredRegistrationTests(unittest.TestCase):
                     expected_executor_version=env.expected_executor_version,
                 )
                 self.assertEqual(executor.components, ())
+
+
+# ---------------------------------------------------------------------------
+# F-R5-AUD-01 — `watchdog awg verify` must not contradict a valid kernel-backed
+# runtime with an "incomplete runtime" claim.
+# ---------------------------------------------------------------------------
+
+
+class F_R5_AUD_01AwgVerifyKernelBackedTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env_patch = mock.patch.dict(
+            os.environ,
+            {
+                "WATCHDOGVPN_CONFIG_DIR": self._tmp.name,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(self._tmp.name) / "profiles.json"),
+            },
+            clear=False,
+        )
+        self._env_patch.start()
+        # An AmneziaWG profile exists, so lifecycle context is present; the
+        # state must reflect the available runtime, not context absence.
+        Path(self._tmp.name, "profiles.json").write_text(
+            json.dumps([{"id": "awg-test", "protocol": "amneziawg", "name": "Server 1", "source": "manual"}]),
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self._env_patch.stop()
+        self._tmp.cleanup()
+
+    def _args(self, json_output: bool = False) -> argparse.Namespace:
+        return argparse.Namespace(json=json_output)
+
+    def _kernel_backed_probe(self, sha: str = "aa" * 32) -> RuntimeProbe:
+        components = {
+            "awg": _component("awg", present=True, sha=sha),
+            "awg-quick": _component("awg-quick", present=True, sha=sha),
+            "amneziawg-go": _component("amneziawg-go", present=False),
+        }
+        return RuntimeProbe(components=components, all_present=False, runtime_available=True)
+
+    def _pending_pair(self) -> list[ResolvedRelease]:
+        return [
+            ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vA", "aa" * 20, "2026-09-27T00:00:00Z"),
+            ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, "vA2", "bb" * 20, "2026-09-27T00:00:00Z"),
+        ]
+
+    def _write_manifest(self, releases, sha: str) -> None:
+        by_repo = {r.repository: r for r in releases}
+        manifest = {
+            "schema": 1,
+            "tools": {"repository": AMNEZIAWG_TOOLS_REPO, "tag": by_repo[AMNEZIAWG_TOOLS_REPO].tag, "commit": by_repo[AMNEZIAWG_TOOLS_REPO].commit},
+            "transport": {"repository": AMNEZIAWG_TRANSPORT_REPO, "tag": by_repo[AMNEZIAWG_TRANSPORT_REPO].tag, "commit": by_repo[AMNEZIAWG_TRANSPORT_REPO].commit},
+            "outputs": {name: sha for name in ("awg", "awg-quick", "amneziawg-go")},
+            "arch": "x86_64",
+            "distro": "opensuse_leap",
+        }
+        Path(self._tmp.name, "amneziawg_build_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def _matching_platform(self):
+        return mock.patch(
+            "cli.main.detect_platform",
+            return_value={"arch": "x86_64", "distro": "opensuse_leap", "version": "15.6"},
+        )
+
+    def test_json_reports_available_and_unverified_with_artifact_reason(self) -> None:
+        releases = self._pending_pair()
+        store_pending_releases(releases)
+        self._write_manifest(releases, "aa" * 32)
+        stdout = StringIO()
+        with self._matching_platform(), mock.patch("cli.main.probe_runtime", return_value=self._kernel_backed_probe()):
+            with redirect_stdout(stdout):
+                rc = _awg_verify(self._args(json_output=True))
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertIs(payload["runtime_available"], True)
+        self.assertIs(payload["verified"], False)
+        self.assertIs(payload["recorded"], False)
+        self.assertEqual(payload["state"], STATE_PROFILE_AVAILABLE)
+        self.assertNotIn("incomplete", payload["reason"].lower())
+        self.assertIn("amneziawg-go", payload["reason"])
+        self.assertIn("manifest", payload["reason"].lower())
+
+    def test_human_output_has_no_incomplete_claim(self) -> None:
+        releases = self._pending_pair()
+        store_pending_releases(releases)
+        self._write_manifest(releases, "aa" * 32)
+        stdout = StringIO()
+        with self._matching_platform(), mock.patch("cli.main.probe_runtime", return_value=self._kernel_backed_probe()):
+            with redirect_stdout(stdout):
+                rc = _awg_verify(self._args(json_output=False))
+        self.assertEqual(rc, 0)
+        text = stdout.getvalue()
+        self.assertNotIn("incomplete", text.lower())
+        self.assertIn("could not certify", text)
+        self.assertIn("manifest", text.lower())
+
+    def test_no_pending_still_reports_available_without_incomplete(self) -> None:
+        stdout = StringIO()
+        with mock.patch("cli.main.probe_runtime", return_value=self._kernel_backed_probe()):
+            with redirect_stdout(stdout):
+                rc = _awg_verify(self._args(json_output=True))
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertIs(payload["runtime_available"], True)
+        self.assertIs(payload["verified"], False)
+        self.assertNotIn("incomplete", payload["reason"].lower())
+
+    def test_truly_unavailable_runtime_reports_not_available(self) -> None:
+        components = {
+            "awg": _component("awg", present=False),
+            "awg-quick": _component("awg-quick", present=False),
+            "amneziawg-go": _component("amneziawg-go", present=False),
+        }
+        probe = RuntimeProbe(components=components, all_present=False, runtime_available=False)
+        stdout = StringIO()
+        with mock.patch("cli.main.probe_runtime", return_value=probe):
+            with redirect_stdout(stdout):
+                rc = _awg_verify(self._args(json_output=True))
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertIs(payload["runtime_available"], False)
+        self.assertIs(payload["verified"], False)
+        self.assertNotIn("incomplete", payload["reason"].lower())
+        self.assertIn("not available", payload["reason"])
 
 
 if __name__ == "__main__":
