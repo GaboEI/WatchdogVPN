@@ -946,6 +946,8 @@ remove_watchdogvpn_system_account() {
 repair_watchdogvpn_shared_state_permissions() {
   local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
   local private_dir="$target_dir/private"
+  local dns_restore_dir="$target_dir/nm-dns-restore"
+  local tun_dir="$target_dir/nm-tun"
   if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
     printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
     return 0
@@ -954,13 +956,22 @@ repair_watchdogvpn_shared_state_permissions() {
     printf '[SKIP] WatchdogVPN shared state directory not present: %s\n' "$target_dir"
     return 0
   fi
-  run_step sudo chown -R watchdogvpn:watchdogvpn "$target_dir"
   # The normal state is intentionally shared with the desktop user's
-  # watchdogvpn group. DNS/FakeIP mappings are browsing metadata, however,
-  # and belong in the service-only subtree rather than being widened by this
-  # generic shared-state repair.
-  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type d -exec chmod 2770 {} +
-  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type f -exec chmod 0660 {} +
+  # watchdogvpn group. Three subtrees are excluded from this generic widening
+  # because they are root-only privileged authority, not shared browsing state:
+  # `private`, and the NetworkManager DNS-restore and TUN-cleanup state
+  # directories, whose owner and mode are enforced by the no-follow
+  # watchdogvpn-state-guard. Widening any of them would hand a group member
+  # control over a path the fixed root helpers later trust.
+  run_step sudo find "$target_dir" \
+    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
+    -exec chown watchdogvpn:watchdogvpn {} +
+  run_step sudo find "$target_dir" \
+    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
+    -type d -exec chmod 2770 {} +
+  run_step sudo find "$target_dir" \
+    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
+    -type f -exec chmod 0660 {} +
 }
 
 prepare_watchdogvpn_private_state() {
