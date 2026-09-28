@@ -253,6 +253,133 @@ class SubscriptionProviderTests(unittest.TestCase):
             profiles = ProfileStore(Path(tmp) / "profiles.json").list()
             self.assertEqual({profile.name for profile in profiles}, {"One", "Two"})
 
+    def test_update_partial_refresh_equal_count_preserves_existing_byte_exact(self) -> None:
+        # T-PR23-04: a refresh reporting rejected profiles must never act as an
+        # exact replacement, even when the accepted count equals the existing
+        # count. `one,three` (rejected=1) must not delete `two`.
+        results = [
+            SubscriptionFetchResult(
+                profiles=[
+                    _profile("one", "One", "one.example.com"),
+                    _profile("two", "Two", "two.example.com"),
+                ]
+            ),
+            SubscriptionFetchResult(
+                profiles=[
+                    _profile("one", "One", "one.example.com"),
+                    _profile("three", "Three", "three.example.com"),
+                ],
+                rejected_profiles=1,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            with patch("providers.subscription_provider.fetch_subscription", side_effect=results):
+                stored = provider.add("https://provider.example/sub", "Provider")
+                provider_before = provider_path.read_bytes()
+                profile_before = profile_path.read_bytes()
+
+                with self.assertRaisesRegex(ParseError, "incomplete profile set"):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+            names = {profile.name for profile in ProfileStore(profile_path).list()}
+            self.assertEqual(names, {"One", "Two"})
+
+    def test_update_partial_refresh_preserves_manual_and_other_provider_profiles(self) -> None:
+        results = [
+            SubscriptionFetchResult(
+                profiles=[
+                    _profile("one", "One", "one.example.com"),
+                    _profile("two", "Two", "two.example.com"),
+                ]
+            ),
+            SubscriptionFetchResult(
+                profiles=[
+                    _profile("one", "One", "one.example.com"),
+                    _profile("three", "Three", "three.example.com"),
+                ],
+                rejected_profiles=1,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            with patch("providers.subscription_provider.fetch_subscription", side_effect=results):
+                stored = provider.add("https://provider.example/sub", "Provider")
+                manual = _profile("manual-1", "Manual", "manual.example.com")
+                ProfileStore(Path(tmp) / "profiles.json").add(manual)
+
+                with self.assertRaisesRegex(ParseError, "incomplete profile set"):
+                    provider.update(stored.id)
+
+            ids = {profile.id for profile in ProfileStore(Path(tmp) / "profiles.json").list()}
+            self.assertEqual(ids, {"manual-1", "provider:one", "provider:two"})
+
+    def test_update_validation_failure_preserves_stores_byte_exact(self) -> None:
+        # A rejected endpoint (non-global literal address) must abort the
+        # refresh before either document is written.
+        results = [
+            SubscriptionFetchResult(profiles=[_profile("one", "One", "one.example.com")]),
+            SubscriptionFetchResult(profiles=[_profile("bad", "Bad", "127.0.0.1")]),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            with patch("providers.subscription_provider.fetch_subscription", side_effect=results):
+                stored = provider.add("https://provider.example/sub", "Provider")
+                provider_before = provider_path.read_bytes()
+                profile_before = profile_path.read_bytes()
+
+                with self.assertRaises(ParseError):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+
+    def test_update_complete_refresh_removes_retired_profile(self) -> None:
+        # A complete, fully accepted refresh (rejected=0) is still an exact
+        # replacement: an intentionally retired node is removed.
+        results = [
+            SubscriptionFetchResult(
+                profiles=[
+                    _profile("one", "One", "one.example.com"),
+                    _profile("two", "Two", "two.example.com"),
+                ]
+            ),
+            SubscriptionFetchResult(
+                profiles=[_profile("one", "One", "one.example.com")],
+                rejected_profiles=0,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            with patch("providers.subscription_provider.fetch_subscription", side_effect=results):
+                stored = provider.add("https://provider.example/sub", "Provider")
+                provider.update(stored.id)
+
+            ids = {profile.id for profile in ProfileStore(Path(tmp) / "profiles.json").list()}
+            self.assertEqual(ids, {"provider:one"})
+
     def test_update_matches_existing_nodes_by_fingerprint_not_new_id(self) -> None:
         calls = {"count": 0}
 

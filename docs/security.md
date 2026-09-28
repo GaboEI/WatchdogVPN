@@ -92,6 +92,35 @@ external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
 
+## NetworkManager Lifecycle State
+
+When NetworkManager manages the active network, WatchdogVPN records the
+identity of the TUN connection it owns so it can later delete exactly that
+profile without touching connections it does not own.
+
+- The ownership registry lives root-owned and root-only at
+  `/var/lib/watchdogvpn/nm-tun/owned-uuid`, outside the daemon-writable `/run`
+  and outside the daemon's group state, so the authority survives a reboot
+  because a NetworkManager profile is persistent. A malformed, ambiguous,
+  symlinked, wrongly-owned or non-root-owned registry is rejected and no
+  NetworkManager profile is deleted; a connection is deleted only when its UUID
+  matches the recorded owner and its name and type still match. When no
+  ownership registry exists but a product-shaped residual profile does, the
+  helper refuses to delete it by name and reports failure instead of a false
+  clean teardown.
+- The registration helper exits non-zero when NetworkManager did not adopt the
+  TUN, so a caller that only checks the helper exit status never treats an
+  unconfirmed adoption as recorded ownership.
+- NetworkManager DNS restoration uses the immutable root-only snapshot at
+  `/var/lib/watchdogvpn/nm-dns-restore/snapshot.json` through the fixed root
+  helper. When that snapshot is absent but a legacy runtime snapshot exists,
+  the helper restores from the legacy state only when the file is root-owned
+  and not group- or other-writable, so the unprivileged daemon cannot forge the
+  DNS values that root applies. The installer promotes (migrates) a legacy
+  snapshot into the root authority only under that same trust bar, so a snapshot
+  the daemon could write is never promoted to a root authority. An absent, corrupt or untrusted snapshot fails
+  with an actionable error and no DNS mutation.
+
 ## Kill Switch Scope
 
 The kill switch is a system-wide fail-closed firewall guard for WatchdogVPN's
@@ -245,6 +274,14 @@ What the parser enforces:
 - **Process isolation**: the OpenVPN process is launched through `setpriv`
   with only `net_admin` and `net_raw` capabilities, even when the daemon
   holds broader privileges.
+- **Native endpoint-route protection**: before startup the driver pins the
+  single remote endpoint with a host route on the current default path
+  (gateway, interface and `onlink` semantics). A pre-existing endpoint route
+  is accepted only when it resolves to that same gateway and interface; an
+  unverifiable, ambiguous or differently-routed endpoint fails closed instead
+  of being trusted. Failed startup after route creation rolls back atomically:
+  any spawned process is stopped, the endpoint route is removed only when this
+  attempt created it, and runtime state is cleared.
 
 These checks run at profile import time and are repeated by the drivers
 before writing any runtime config file. Malformed or unsafe profiles are

@@ -133,9 +133,14 @@ class SubscriptionProvider(BaseProvider):
                 for profile in current_profiles
                 if profile.provider_id == current_provider.id
             }
-            if rejected_profiles and len(fetched) < len(existing):
+            if rejected_profiles:
+                # Any rejected profile means the incoming set is not a complete
+                # replacement. Publishing it could silently drop a provider
+                # node whose accepted count happens to equal the existing
+                # count (T-PR23-04). Keep the last good state instead.
                 raise ParseError(
-                    "subscription update returned an incomplete profile set; "
+                    "subscription update returned an incomplete profile set "
+                    f"({rejected_profiles} profile(s) rejected); "
                     "existing provider profiles were preserved"
                 )
             normalized = self._normalize_profiles(

@@ -71,8 +71,22 @@ distro_experimental_override_accepted() {
 # Persist that the user accepted the experimental-distro risk for the distro
 # detected right now. Never called for the certification-lab path - that one
 # stays unpromoted and unrecorded, exactly as before this function existed.
+# Usage: distro_record_experimental_override [trigger]
+#   trigger: message fragment naming how the acceptance was given (for example
+#   "via --accept-experimental-distro-risk" or "after interactive confirmation").
+# This helper is the single dry-run gate for every caller (install.sh and
+# update.sh): under INSTALL_DRY_RUN=1 the acceptance is simulated only to
+# produce the plan and nothing is created, written, chmod/chown'ed or persisted
+# (no marker, no marker directory, no temporary file).
 distro_record_experimental_override() {
+  local trigger="${1:-explicitly}"
   local marker_dir tmp_marker
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    warn "dry-run: experimental distro risk acceptance (${trigger}) is simulated only to produce this plan for ${DISTRO_NAME} (${DISTRO_ID}) and is NOT persisted"
+    return 0
+  fi
+
   marker_dir="$(dirname "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER")"
 
   if [[ "${EUID:-$(id -u)}" -ne 0 && "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER" == /etc/* ]]; then
@@ -85,6 +99,7 @@ distro_record_experimental_override() {
     sudo install -d -m 0700 -o root -g root "$marker_dir"
     sudo install -m 0600 -o root -g root "$tmp_marker" "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
     rm -f "$tmp_marker"
+    warn "experimental distro override: risk accepted ${trigger} for ${DISTRO_NAME} (${DISTRO_ID})"
     return 0
   fi
 
@@ -95,6 +110,7 @@ distro_record_experimental_override() {
     date -u '+%Y-%m-%dT%H:%M:%SZ'
   } >"$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
   chmod 600 "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
+  warn "experimental distro override: risk accepted ${trigger} for ${DISTRO_NAME} (${DISTRO_ID})"
 }
 
 

@@ -141,11 +141,9 @@ require_supported_distro() {
     elif distro_experimental_override_accepted; then
       warn "experimental distro override: previously accepted by you for ${DISTRO_NAME} (${DISTRO_ID})"
     elif ((ACCEPT_EXPERIMENTAL_DISTRO_RISK == 1)); then
-      distro_record_experimental_override
-      warn "experimental distro override: risk accepted via --accept-experimental-distro-risk for ${DISTRO_NAME} (${DISTRO_ID})"
+      distro_record_experimental_override "via --accept-experimental-distro-risk"
     elif [[ -t 0 ]] && prompt_experimental_distro_override; then
-      distro_record_experimental_override
-      warn "experimental distro override: you accepted the risk for ${DISTRO_NAME} (${DISTRO_ID})"
+      distro_record_experimental_override "after interactive confirmation"
     else
       print_future_distro
       exit 1
@@ -249,7 +247,22 @@ validate_python_runtime_dependencies
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
-  "$ROOT_DIR/doctor.sh"
+  # The ONLY non-fatal doctor condition permitted here is a recognised legacy
+  # installation whose provenance is migratable. doctor.sh signals that exact
+  # case with exit 0 and a trailing LEGACY_MIGRATABLE=1. Every other outcome —
+  # incomplete, malformed or unverifiable provenance, or any unrelated doctor
+  # failure — stays fatal and terminates the update before any destructive step.
+  doctor_preflight_rc=0
+  doctor_preflight_output="$("$ROOT_DIR/doctor.sh" 2>&1)" || doctor_preflight_rc=$?
+  printf '%s\n' "$doctor_preflight_output"
+  if (( doctor_preflight_rc != 0 )); then
+    fail "read-only preflight found blocking problems; refusing to update"
+    printf 'Fix the reported problems and rerun ./update.sh. No system changes were made.\n' >&2
+    exit 1
+  fi
+  if grep -Fxq 'LEGACY_MIGRATABLE=1' <<<"$doctor_preflight_output"; then
+    warn "recognised legacy provenance layout; continuing so the update can publish attributable hashed provenance"
+  fi
 fi
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then

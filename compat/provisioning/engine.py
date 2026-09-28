@@ -1651,6 +1651,20 @@ def _recover_one(
             journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, str(exc))
 
+    # Bind the executor to the journal's own persisted state before rebuilding
+    # the plan. An executor that resolves external state (for example the exact
+    # official release pair) must reconstruct it from this authoritative journal
+    # rather than re-resolving live upstream state, and must fail closed when
+    # the journal cannot supply a complete, valid state.
+    try:
+        executor = executor.recovery_bound_executor(journal)
+    except ProvisioningError as exc:
+        reason = "cannot bind recovery to the journal's recorded release state: %s" % exc
+        if journal.state != TransactionState.RECOVERY_REQUIRED:
+            journal = journal.with_state(TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": reason})
+            journal_mod.write_journal(state_root, journal)
+        return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, reason)
+
     try:
         steps = executor.plan_steps(capability_id=journal.capability_id, dependency_id=journal.dependency_id, context=context)
         plan = ProvisioningPlan(

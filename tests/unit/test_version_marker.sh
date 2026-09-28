@@ -47,6 +47,15 @@ assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0755' "version 
 assert_contains "$ROOT_DIR/doctor.sh" 'verify-daemon' "doctor must compare the active daemon generation with installed provenance"
 assert_contains "$ROOT_DIR/doctor.sh" 'daemon process generation did not prove the installed runtime provenance' "doctor must fail closed when an H1 daemon omits its generation digest"
 assert_contains "$ROOT_DIR/doctor.sh" 'provenance_layout_state="$(installed_provenance_layout_state)"' "doctor must classify incomplete H1 publication"
+assert_contains "$ROOT_DIR/doctor.sh" 'mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"' "doctor must warn, not fail, for a migratable legacy provenance layout"
+assert_contains "$ROOT_DIR/doctor.sh" 'LEGACY_MIGRATABLE=1' "doctor must set the legacy-migratable signal only for the migratable legacy case"
+assert_contains "$ROOT_DIR/doctor.sh" "printf 'LEGACY_MIGRATABLE=%d\n' \"\$DOCTOR_LEGACY_MIGRATABLE\"" "doctor must emit the legacy-migratable signal in its result block"
+
+# The updater must be fail-closed: continue only on the recognised legacy
+# condition, abort on every other doctor failure.
+assert_contains "$ROOT_DIR/update.sh" 'doctor_preflight_output="$("$ROOT_DIR/doctor.sh" 2>&1)"' "updater must capture the doctor preflight output"
+assert_contains "$ROOT_DIR/update.sh" 'if (( doctor_preflight_rc != 0 )); then' "updater must abort on any non-zero doctor exit"
+assert_contains "$ROOT_DIR/update.sh" "grep -Fxq 'LEGACY_MIGRATABLE=1'" "updater must key its non-fatal path on the explicit legacy signal"
 
 # --- behavioral: record/read/compare actually works, isolated from the real
 #     system (no sudo, a throwaway marker path) ---

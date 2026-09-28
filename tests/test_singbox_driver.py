@@ -2254,6 +2254,71 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
     @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
     @patch("drivers.singbox_driver.subprocess.run")
+    def test_cleanup_tun_residue_retains_state_when_networkmanager_cleanup_fails(
+        self, run_mock, which_mock
+    ) -> None:
+        # T-PR23-14: a failed NetworkManager cleanup must not discard the
+        # captured state a later retry needs.
+        self.driver._tun_cleanup_rule_prefs = ("9000", "9001")
+        self.driver._tun_cleanup_route_tables = ("2022",)
+        self.driver._tun_rule_baseline = ("0:\tfrom all lookup local",)
+
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, stdout="active\n", stderr="")
+            if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"]:
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="denied")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+        self.assertFalse(self.driver._cleanup_tun_residue())
+        self.assertEqual(self.driver._tun_cleanup_rule_prefs, ("9000", "9001"))
+        self.assertEqual(self.driver._tun_cleanup_route_tables, ("2022",))
+        self.assertEqual(self.driver._tun_rule_baseline, ("0:\tfrom all lookup local",))
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_cleanup_tun_residue_retry_clears_state_only_after_success(
+        self, run_mock, which_mock
+    ) -> None:
+        self.driver._tun_cleanup_rule_prefs = ("9000",)
+        self.driver._tun_cleanup_route_tables = ("2022",)
+        outcome = {"fail": True}
+
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, stdout="active\n", stderr="")
+            if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"]:
+                return subprocess.CompletedProcess(
+                    command, 1 if outcome["fail"] else 0, stdout="", stderr=""
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+        self.assertFalse(self.driver._cleanup_tun_residue())
+        self.assertEqual(self.driver._tun_cleanup_rule_prefs, ("9000",))
+
+        outcome["fail"] = False
+        self.assertTrue(self.driver._cleanup_tun_residue())
+        self.assertEqual(self.driver._tun_cleanup_rule_prefs, ())
+        self.assertEqual(self.driver._tun_cleanup_route_tables, ())
+
+    def test_reconcile_stale_tun_state_retries_retained_cleanup_state(self) -> None:
+        self.driver._tun_cleanup_rule_prefs = ("9000",)
+        with (
+            patch.object(self.driver, "_singbox_process_alive", return_value=False),
+            patch.object(self.driver, "_discover_singbox_tun_residue", return_value=((), ())),
+            patch.object(self.driver, "_tun_interface_exists", return_value=False),
+            patch.object(self.driver, "_cleanup_tun_residue") as cleanup,
+        ):
+            self.driver.reconcile_stale_tun_state()
+
+        cleanup.assert_called_once_with()
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
     def test_disconnect_fails_when_privileged_networkmanager_cleanup_cannot_start(
         self, run_mock, which_mock
     ) -> None:

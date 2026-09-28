@@ -135,6 +135,23 @@ source_checkout_commit() {
   git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null
 }
 
+# An installed runtime is proven by a product binary on disk, never by a
+# version marker alone. A preserved /etc/watchdogvpn/ marker after uninstall
+# must not be reported as a migratable installation.
+installed_runtime_present() {
+  local path
+  for path in \
+    /usr/local/bin/watchdog \
+    /usr/local/bin/watchdogvpn \
+    /usr/local/bin/watchdogvpn-daemon \
+    /usr/local/bin/vpnctl \
+    /usr/local/bin/vpn_truth_check
+  do
+    [[ -e "$path" ]] && return 0
+  done
+  return 1
+}
+
 require_clean_source_checkout() {
   local commit status_output
   commit="$(git -C "$ROOT_DIR" rev-parse --verify HEAD^{commit} 2>/dev/null || true)"

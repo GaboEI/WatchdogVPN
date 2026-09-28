@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import hashlib
 import os
@@ -9,9 +10,9 @@ from pathlib import Path
 import pwd
 import shutil
 import stat as stat_module
-from typing import Mapping, Protocol
+from typing import Mapping, Protocol, Sequence
 
-from compat.provisioning.errors import PathPolicyError
+from compat.provisioning.errors import PathPolicyError, ProvisioningError
 from compat.provisioning.executors import ExecutionContext, Executor, handle_for_allowed_root
 from compat.provisioning.journal import StepRecord
 from compat.provisioning.model import (
@@ -42,8 +43,13 @@ from diagnostics.amneziawg_lifecycle import (
 
 AMNEZIAWG_SOURCE_BUILD_METHOD_KIND = "pinned_source_build"
 AMNEZIAWG_SOURCE_BUILD_EXECUTOR_ID = "amneziawg_userspace_source_build"
-AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION = "1"
+AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION = "2"
 AMNEZIAWG_INSTALL_ROOT = Path("/usr/local/bin")
+# Explicit authority boundary for privileged build workspaces. The executor may
+# only create, mutate, or delete directories strictly below this root; a
+# caller-supplied workspace outside it is rejected before any privileged
+# mkdir/chown/chmod/delete/build step can run.
+AMNEZIAWG_WORKSPACE_AUTHORITY_ROOT = Path("/var/lib/watchdogvpn/provisioning/build")
 AMNEZIAWG_OUTPUTS = ("awg", "awg-quick", "amneziawg-go")
 AMNEZIAWG_BUILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 AMNEZIAWG_BUILD_LOCALE = "C.UTF-8"
@@ -90,12 +96,16 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         install_root: Path = AMNEZIAWG_INSTALL_ROOT,
         runner: CommandRunner | None = None,
         require_root_install: bool = True,
+        workspace_authority_root: Path | None = None,
     ) -> None:
         validate_identifier(method_id, field="method_id")
         self.method_id = method_id
         self.components = components
         self.build_user = _validate_build_user(build_user)
         self.workspace_root = Path(workspace_root)
+        self.workspace_authority_root = (
+            Path(workspace_authority_root) if workspace_authority_root is not None else AMNEZIAWG_WORKSPACE_AUTHORITY_ROOT
+        )
         self.install_root = Path(install_root)
         self.runner = runner or SubprocessCommandRunner()
         self.require_root_install = require_root_install
@@ -110,6 +120,29 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
 
     def step_is_replay_safe(self, step: StepRecord) -> bool:
         return True
+
+    def recovery_bound_executor(self, journal) -> "AmneziaWGUserspaceSourceBuildExecutor":
+        """Rebuild this executor from the exact release pair the interrupted
+        transaction journal persisted, never from live upstream resolution.
+
+        The journal's own step intents carry the exact repository/tag/revision
+        resolved when the transaction was prepared; recovery must use those
+        pins so it reconstructs the same plan deterministically even when the
+        upstream ``latest`` release changed, is unavailable, or offline. An
+        incomplete, duplicated, swapped or non-official journal pair fails
+        closed before any provisioning mutation.
+        """
+        components = _components_from_journal_steps(journal.steps)
+        if components is None:
+            raise ProvisioningError(
+                "interrupted transaction journal does not carry a complete, official, "
+                "self-consistent AmneziaWG release pair; recovery must fail closed rather "
+                "than substitute a freshly resolved upstream release"
+            )
+        bound = copy.copy(self)
+        bound.components = components
+        bound._built_outputs = {}
+        return bound
 
     def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext) -> tuple[ProvisioningStep, ...]:
         validate_identifier(capability_id, field="capability_id")
@@ -279,10 +312,23 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         component = next((item for item in self.components if item.component_id == component_id), None)
         if component is None:
             raise ValueError("unknown component %s" % component_id)
+        try:
+            validate_identifier(component.component_id, field="component_id")
+        except ValueError as exc:
+            raise ValueError("invalid component id %r: %s" % (component.component_id, exc)) from None
         worktree = self.workspace_root / component.component_id
+        self._prepare_build_workspace_parent(self.workspace_root)
+        self._assert_within_workspace_authority(worktree)
+        if worktree.is_symlink():
+            raise ValueError("build worktree %s is a symlink; refusing to delete or build in it" % worktree)
         if worktree.exists():
+            st = worktree.stat()
+            if not stat_module.S_ISDIR(st.st_mode) or (st.st_uid, st.st_gid) != (self._build_uid, self._build_gid):
+                raise ValueError(
+                    "refusing to delete pre-existing build worktree %s not owned by build user %s"
+                    % (worktree, self.build_user)
+                )
             shutil.rmtree(worktree)
-        self._prepare_build_workspace_parent(worktree.parent)
         self._run_ok(("git", "init", str(worktree)), cwd=None, run_as_user=self.build_user)
         self._run_ok(("git", "-C", str(worktree), "remote", "add", "origin", component.repository), cwd=None, run_as_user=self.build_user)
         self._run_ok(("git", "-C", str(worktree), "fetch", "--depth", "1", "origin", "refs/tags/%s" % component.tag), cwd=None, run_as_user=self.build_user)
@@ -304,14 +350,75 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         else:
             raise ValueError("unsupported component %s" % component.component_id)
 
+    def _assert_within_workspace_authority(self, path: Path) -> None:
+        """Fail closed unless ``path`` is a dedicated directory strictly below
+        the configured workspace authority root and no existing path component
+        is a symlink. This runs before any mkdir/chown/chmod/delete/build step
+        so a caller-supplied ``workspace_root`` can never cause privileged
+        mutation of an existing external directory or its parents."""
+        if not self.workspace_authority_root.is_absolute():
+            raise ValueError("workspace authority root must be absolute: %s" % self.workspace_authority_root)
+        if not path.is_absolute():
+            raise ValueError("build workspace path must be absolute: %s" % path)
+        normalized = Path(os.path.normpath(path))
+        authority = Path(os.path.normpath(self.workspace_authority_root))
+        if normalized == authority:
+            raise ValueError("build workspace must be a dedicated directory below the authority root %s" % authority)
+        try:
+            relative = normalized.relative_to(authority)
+        except ValueError:
+            raise ValueError(
+                "build workspace %s is outside the trusted workspace authority root %s" % (path, authority)
+            ) from None
+        if not relative.parts or any(part in (os.curdir, os.pardir) for part in relative.parts):
+            raise ValueError("build workspace %s is not a dedicated directory below %s" % (path, authority))
+        self._reject_symlinked_path_components(authority, "workspace authority root")
+        self._reject_symlinked_path_components(normalized, "build workspace")
+
+    def _reject_symlinked_path_components(self, path: Path, label: str) -> None:
+        current = Path("/")
+        for part in path.parts[1:]:
+            current = current / part
+            try:
+                st = os.lstat(current)
+            except FileNotFoundError:
+                return
+            if stat_module.S_ISLNK(st.st_mode):
+                raise ValueError("%s path component %s is a symlink" % (label, current))
+            if not stat_module.S_ISDIR(st.st_mode):
+                raise ValueError("%s path component %s is not a directory" % (label, current))
+
     def _prepare_build_workspace_parent(self, path: Path) -> None:
+        self._assert_within_workspace_authority(path)
+        if path.exists() or path.is_symlink():
+            self._require_controlled_workspace_directory(path)
+            return
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
         if os.geteuid() == 0:
             os.chown(path, self._build_uid, self._build_gid)
+        os.chmod(path, 0o700)
         st = path.stat()
         if (st.st_uid, st.st_gid) != (self._build_uid, self._build_gid):
             raise ValueError("build workspace parent %s is not owned by build user %s" % (path, self.build_user))
-        os.chmod(path, 0o700)
+
+    def _require_controlled_workspace_directory(self, path: Path) -> None:
+        if path.is_symlink():
+            raise ValueError("build workspace %s is a symlink" % path)
+        st = path.stat()
+        if not stat_module.S_ISDIR(st.st_mode):
+            raise ValueError("build workspace %s is not a directory" % path)
+        if (st.st_uid, st.st_gid) != (self._build_uid, self._build_gid):
+            raise ValueError(
+                "pre-existing build workspace %s is not owned by build user %s; refusing to take ownership"
+                % (path, self.build_user)
+            )
+        mode = stat_module.S_IMODE(st.st_mode)
+        if mode & 0o022:
+            raise ValueError(
+                "pre-existing build workspace %s is writable by group/world actors (mode %o)" % (path, mode)
+            )
+        if mode != 0o700:
+            os.chmod(path, 0o700)
 
     def _run_ok(self, argv, *, cwd: Path | None, run_as_user: str | None) -> CommandResult:
         result = self.runner.run(argv, cwd=cwd, env=self._sanitized_build_env(), run_as_user=run_as_user, timeout=600.0)
@@ -389,6 +496,56 @@ def components_from_candidate(
             )
         )
     return tuple(components)
+
+
+def _components_from_journal_steps(steps: Sequence) -> tuple[SourceComponent, ...] | None:
+    """Reconstruct the exact source components a prepare journal persisted.
+
+    Reads only the journal's own persisted step intents (repository/tag/
+    revision and component/output identity). Returns ``None`` when the journal
+    does not carry a complete, official and self-consistent pair, so the caller
+    fails closed instead of resolving live upstream state.
+    """
+    seen_outputs: set[str] = set()
+    per_component: dict[str, dict[str, str]] = {}
+    outputs_by_component: dict[str, list[str]] = {}
+    for step in steps:
+        intent = step.intent
+        component_id = intent.get("component_id")
+        repository = intent.get("repository")
+        tag = intent.get("tag")
+        revision = intent.get("revision")
+        output_name = intent.get("output_name")
+        if component_id not in _OFFICIAL_RELEASE_REPOSITORY:
+            return None
+        official_repository = "https://github.com/%s" % _OFFICIAL_RELEASE_REPOSITORY[component_id]
+        if repository != official_repository:
+            return None
+        if not isinstance(tag, str) or not tag or not isinstance(revision, str) or not revision:
+            return None
+        if not isinstance(output_name, str) or not output_name or output_name in seen_outputs:
+            return None
+        seen_outputs.add(output_name)
+        record = per_component.setdefault(
+            component_id, {"repository": repository, "tag": tag, "revision": revision}
+        )
+        if (record["repository"], record["tag"], record["revision"]) != (repository, tag, revision):
+            return None
+        outputs_by_component.setdefault(component_id, []).append(output_name)
+    if set(per_component) != set(_OFFICIAL_RELEASE_REPOSITORY):
+        return None
+    if set(seen_outputs) != set(AMNEZIAWG_OUTPUTS):
+        return None
+    return tuple(
+        SourceComponent(
+            component_id=component_id,
+            repository=per_component[component_id]["repository"],
+            tag=per_component[component_id]["tag"],
+            revision=per_component[component_id]["revision"],
+            expected_outputs=tuple(outputs_by_component[component_id]),
+        )
+        for component_id in ("amneziawg_tools", "amneziawg_transport")
+    )
 
 
 def _validate_build_user(build_user: str) -> str:

@@ -258,8 +258,54 @@ def _installed_entries(data: dict[str, object]) -> list[InstalledRelease]:
     return entries
 
 
+def _is_complete_release_group(entries: Sequence[InstalledRelease]) -> bool:
+    """True only for a valid AmneziaWG release group.
+
+    A valid group is exactly one ``amneziawg-tools`` entry plus exactly one
+    ``amneziawg-go`` entry recorded together: the same ``recorded_at`` (one
+    install), the same platform, and the same independent build-manifest
+    provenance. An incomplete, duplicated, mixed-time or mixed-provenance
+    group is never valid rollback history.
+    """
+    if len(entries) != 2:
+        return False
+    repositories = sorted(entry.repository for entry in entries)
+    if repositories != sorted((AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO)):
+        return False
+    reference = entries[0]
+    if not reference.recorded_at:
+        return False
+    for entry in entries[1:]:
+        if (
+            entry.recorded_at != reference.recorded_at
+            or entry.distro != reference.distro
+            or entry.arch != reference.arch
+            or entry.build_manifest_sha256 != reference.build_manifest_sha256
+        ):
+            return False
+    return True
+
+
+def _complete_installed_groups(entries: Sequence[InstalledRelease]) -> list[InstalledRelease]:
+    """Keep only entries that belong to a complete official release group.
+
+    Recorded data that is incomplete, duplicated, mixed-time or
+    mixed-provenance is ignored (never returned, never selected as a rollback
+    candidate) without deleting or altering it in the registry."""
+    by_time: dict[str, list[InstalledRelease]] = {}
+    for entry in entries:
+        by_time.setdefault(entry.recorded_at, []).append(entry)
+    valid: list[InstalledRelease] = []
+    for group in by_time.values():
+        if _is_complete_release_group(group):
+            valid.extend(group)
+    return valid
+
+
 def load_installed_history() -> list[InstalledRelease]:
-    return _installed_entries(_load_registry())
+    """Return only the installed entries that belong to a complete official
+    release group. Incomplete/mixed recorded data is ignored, never surfaced."""
+    return _complete_installed_groups(_installed_entries(_load_registry()))
 
 
 def save_installed_history(entries: Sequence[InstalledRelease]) -> None:
@@ -283,13 +329,21 @@ def record_installed_release(
     a numeric version string is never treated as reliable provenance.
     """
     platform = platform or _platform()
+    incoming_repositories = sorted(release.repository for release in releases)
+    if incoming_repositories != sorted((AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO)):
+        raise ValueError(
+            "recording an AmneziaWG release requires exactly the complete official pair "
+            "(amneziawg-tools + amneziawg-go); refusing to record %r" % (incoming_repositories,)
+        )
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     sha256_by_name: dict[str, str] = {}
     for name in AMNEZIAWG_OUTPUTS:
         component = probe.components.get(name)
         if component is not None and component.sha256:
             sha256_by_name[name] = component.sha256
-    entries = load_installed_history()
+    # Work from the raw registry so previously recorded (possibly invalid)
+    # entries are never dropped by a load-time filter while appending.
+    entries = _installed_entries(_load_registry())
     created: list[InstalledRelease] = []
     for release in releases:
         entry = InstalledRelease(
@@ -644,9 +698,15 @@ def probe_runtime(root: Path | None = None) -> RuntimeProbe:
         )
     all_present = all(component.present for component in components.values())
     awg_present = components["awg"].present
+    awg_quick_present = components["awg-quick"].present
     go_present = components["amneziawg-go"].present
     kernel_module = Path("/sys/module/amneziawg").exists()
-    runtime_available = bool(all_present and awg_present and (go_present or kernel_module))
+    # Contract: awg && awg-quick && (loaded AmneziaWG kernel module || amneziawg-go).
+    # A kernel-backed runtime (awg + awg-quick with the kernel module loaded) is
+    # available even when the userspace amneziawg-go fallback is absent, matching
+    # the shell-side `amneziawg_runtime_available` model. This never treats a
+    # missing awg or awg-quick as available.
+    runtime_available = bool(awg_present and awg_quick_present and (go_present or kernel_module))
     return RuntimeProbe(
         components=components,
         all_present=all_present,

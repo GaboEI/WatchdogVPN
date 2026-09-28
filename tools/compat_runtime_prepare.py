@@ -10,6 +10,8 @@ install/update/doctor, package-manager repositories, DKMS or kernel modules.
 from __future__ import annotations
 
 import argparse
+import os
+import stat as stat_module
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -154,19 +156,75 @@ def _source_build_candidates(manifest):
             yield candidate
 
 
-def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str, release_resolver=None) -> None:
+def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str, release_resolver=None, *, defer_release_resolution: bool = False) -> None:
     for candidate in _source_build_candidates(manifest):
+        # Recovery must not resolve live upstream releases before it can bind to
+        # the exact pair persisted in the interrupted journal; deferring the
+        # resolution leaves the executor's components empty so the engine's
+        # recovery binds them from that journal instead.
+        components = () if defer_release_resolution else components_from_candidate(candidate, release_resolver=release_resolver)
         executor = AmneziaWGUserspaceSourceBuildExecutor(
             method_id=candidate["id"],
-            components=components_from_candidate(candidate, release_resolver=release_resolver),
+            components=components,
             build_user=build_user,
             workspace_root=Path(args.workspace_root),
+            workspace_authority_root=Path(args.workspace_authority_root) if getattr(args, "workspace_authority_root", None) else None,
             install_root=Path(args.install_root),
         )
         registry.register(method_kind=candidate["kind"], method_id=candidate["id"], executor=executor)
 
 
-def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=None) -> engine.ProvisioningEnvironment:
+def _validate_workspace_arguments(args) -> None:
+    """Reject an unsafe ``--workspace-root`` for every subcommand, including the
+    non-mutating ``plan`` path, so the CLI authority boundary is enforced at the
+    public interface and not only at the mutating build step."""
+    authority_raw = getattr(args, "workspace_authority_root", None)
+    if not authority_raw:
+        return
+    authority = Path(authority_raw)
+    workspace = Path(args.workspace_root)
+    if not authority.is_absolute():
+        raise ValueError("workspace authority root must be absolute: %s" % authority)
+    if not workspace.is_absolute():
+        raise ValueError("workspace root must be absolute: %s" % workspace)
+    normalized_workspace = Path(os.path.normpath(workspace))
+    normalized_authority = Path(os.path.normpath(authority))
+    if normalized_workspace == normalized_authority:
+        raise ValueError("workspace root must be a dedicated directory below the authority root %s" % normalized_authority)
+    try:
+        relative = normalized_workspace.relative_to(normalized_authority)
+    except ValueError:
+        raise ValueError(
+            "workspace root %s is outside the trusted workspace authority root %s"
+            % (workspace, normalized_authority)
+        ) from None
+    if not relative.parts or any(part in (os.curdir, os.pardir) for part in relative.parts):
+        raise ValueError("workspace root %s is not a dedicated directory below %s" % (workspace, normalized_authority))
+    current = Path("/")
+    for part in normalized_authority.parts[1:]:
+        current = current / part
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            break
+        if stat_module.S_ISLNK(st.st_mode):
+            raise ValueError("workspace authority root component %s is a symlink" % current)
+        if not stat_module.S_ISDIR(st.st_mode):
+            raise ValueError("workspace authority root component %s is not a directory" % current)
+    current = Path("/")
+    for part in normalized_workspace.parts[1:]:
+        current = current / part
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            break
+        if stat_module.S_ISLNK(st.st_mode):
+            raise ValueError("workspace root component %s is a symlink" % current)
+        if not stat_module.S_ISDIR(st.st_mode):
+            raise ValueError("workspace root component %s is not a directory" % current)
+
+
+def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=None, defer_release_resolution: bool = False) -> engine.ProvisioningEnvironment:
     if mutating:
         if not args.build_user:
             raise ValueError("--build-user is required for mutating provisioning commands")
@@ -174,7 +232,7 @@ def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=Non
     else:
         build_user = args.build_user or _default_plan_user()
     registry = TrustedExecutorRegistry()
-    _register_source_build_executors(registry, manifest, args, build_user, release_resolver=release_resolver)
+    _register_source_build_executors(registry, manifest, args, build_user, release_resolver=release_resolver, defer_release_resolution=defer_release_resolution)
     context = ExecutionContext(
         allowed_roots=(Path(args.install_root),),
         forbidden_roots=(),
@@ -223,7 +281,10 @@ def cmd_prepare(args) -> int:
 
 def cmd_recover(args) -> int:
     manifest, decision = _context(args)
-    env = _build_env(args, manifest, decision, mutating=True)
+    # Defer release resolution: recovery binds to the exact release pair
+    # persisted in each interrupted transaction's own journal, so it must never
+    # contact the official-release resolver first.
+    env = _build_env(args, manifest, decision, mutating=True, defer_release_resolution=True)
     reports = engine.recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=env.global_lock_root)
     _print([{"transaction_id": item.transaction_id, "action": item.action.value, "reason": item.reason} for item in reports])
     return 0
@@ -260,6 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--global-lock-root", default="/run/lock/watchdogvpn/provisioning")
     parser.add_argument("--install-root", default="/usr/local/bin")
     parser.add_argument("--workspace-root", default="/var/lib/watchdogvpn/provisioning/build/amneziawg")
+    parser.add_argument("--workspace-authority-root", default="/var/lib/watchdogvpn/provisioning/build")
     parser.add_argument("--build-user", help="required explicit non-root user for mutating provisioning commands")
     parser.add_argument("--force-runtime-absent", action="store_true", help="internal fixture/audit mode: force AWG runtime absent before resolving")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -278,6 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        _validate_workspace_arguments(args)
         return args.func(args)
     except (compat_read.ManifestError, detection.DetectionError, resolver.DependencyResolutionError, ValueError, OSError) as exc:
         print("error: %s" % exc, file=sys.stderr)

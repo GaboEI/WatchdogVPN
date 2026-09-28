@@ -39,6 +39,7 @@ from drivers.openvpn_driver import OpenVPNDriver
 from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from dns.models import DNSPolicy
+from dns.networkmanager_restore import root_snapshot_exists
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from dns.resolver_inventory import ResolverManager
 from models.connection_state import ConnectionState
@@ -1574,6 +1575,17 @@ class WatchdogRuntime:
             return True
         try:
             if snapshot.inventory.manager == ResolverManager.NETWORK_MANAGER:
+                if not root_snapshot_exists():
+                    # A legacy/runtime NetworkManager snapshot can outlive the
+                    # root-only snapshot (for example on an install upgraded
+                    # from before the root helper existed). The fixed root
+                    # helper restores from the already-recorded legacy state in
+                    # that case, so NetworkManager DNS restoration is never
+                    # silently abandoned; make the fallback explicit instead.
+                    LOGGER.warning(
+                        "watchdog_dns_restore_on_disconnect "
+                        "status=nm_root_snapshot_absent_using_legacy_snapshot"
+                    )
                 subprocess.run(
                     ["systemctl", "start", "watchdogvpn-nm-dns-restore.service"],
                     check=True,

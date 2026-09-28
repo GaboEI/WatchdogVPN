@@ -482,8 +482,10 @@ class CustodyIsolationPolicy:
     The default lab policy verifies type/owner/mode and records the fact
     that it does not claim same-uid isolation. Callers that must defend
     against another process with the same uid set
-    ``require_uid_separation=True``; if the custody directory is writable
-    by that uid, deletion fails closed.
+    ``require_uid_separation=True``; custody owned by that adversary uid then
+    fails closed regardless of ``trusted_custody_uids``, because a directory
+    owned by the adversary provides no real separation from it. The trusted
+    uid list is diagnostic metadata only and never exempts the adversary.
     """
 
     require_uid_separation: bool = False
@@ -507,7 +509,7 @@ def _verify_private_directory_fd(dir_fd: int, *, label: str, policy: CustodyIsol
     policy = policy or STRICT_CUSTODY_ISOLATION_POLICY
     if policy.require_uid_separation:
         adversary_uid = os.getuid() if policy.adversary_uid is None else policy.adversary_uid
-        if st.st_uid == adversary_uid and st.st_uid not in policy.trusted_custody_uids:
+        if st.st_uid == adversary_uid:
             raise PathPolicyError(
                 "%s is owned by the configured adversary uid %d; no effective same-uid custody separation exists"
                 % (label, adversary_uid)

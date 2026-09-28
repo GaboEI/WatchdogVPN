@@ -4,8 +4,11 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+
+from config.paths import resolve_config_dir
 
 
 SNAPSHOT_DIRECTORY = Path("/var/lib/watchdogvpn/nm-dns-restore")
@@ -17,6 +20,17 @@ DNS_PROPERTIES = (
     "ipv6.ignore-auto-dns",
     "ipv6.dns",
 )
+LEGACY_SNAPSHOT_ENV = "WATCHDOGVPN_NM_DNS_RESTORE_LEGACY"
+LEGACY_SNAPSHOT_NAME = "dns-state.json"
+NETWORK_MANAGER_VALUE = "networkmanager"
+# The legacy runtime snapshot stores connection DNS under underscore keys; the
+# root snapshot uses the NetworkManager property spelling.
+LEGACY_DNS_FIELDS = {
+    "ipv4.ignore-auto-dns": "ipv4_ignore_auto_dns",
+    "ipv4.dns": "ipv4_dns",
+    "ipv6.ignore-auto-dns": "ipv6_ignore_auto_dns",
+    "ipv6.dns": "ipv6_dns",
+}
 
 
 class NetworkManagerRestoreError(RuntimeError):
@@ -28,6 +42,24 @@ def root_snapshot_path() -> Path:
     return Path(override) if override else SNAPSHOT_PATH
 
 
+def root_snapshot_exists() -> bool:
+    try:
+        os.lstat(root_snapshot_path())
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def legacy_snapshot_path() -> Path:
+    """The runtime DNS snapshot that predates the root-only restore authority."""
+    override = os.environ.get(LEGACY_SNAPSHOT_ENV)
+    if override:
+        return Path(override)
+    return resolve_config_dir() / LEGACY_SNAPSHOT_NAME
+
+
 def save_root_snapshot(connections: list[dict[str, str]]) -> None:
     """Persist the DNS-only restore authority before a root DNS apply."""
     if os.geteuid() != 0:
@@ -37,6 +69,7 @@ def save_root_snapshot(connections: list[dict[str, str]]) -> None:
     path = root_snapshot_path()
     if not path.parent.exists():
         path.parent.mkdir(mode=0o700, parents=True)
+        _hardened_root_directory(path.parent)
     _validate_metadata(os.lstat(path.parent), path.parent, 0o700, directory=True)
     temporary = path.with_name(f".{path.name}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -51,18 +84,144 @@ def save_root_snapshot(connections: list[dict[str, str]]) -> None:
 
 
 def restore_root_snapshot() -> bool:
-    """Restore an immutable root snapshot, or do nothing when none exists."""
+    """Restore the root snapshot, falling back to validated legacy state.
+
+    The root-only snapshot is the primary authority. When it is absent (for
+    example on an install upgraded from before the root helper existed) a valid
+    legacy runtime snapshot is used instead, but only when it is trustworthy:
+    root-owned and not writable by group or others, so the unprivileged daemon
+    cannot forge the DNS values that this root helper would apply. Exactly one
+    restore path runs, and an absent, corrupt or untrusted snapshot produces an
+    actionable error without mutating DNS.
+    """
     path = root_snapshot_path()
-    try:
-        os.lstat(path)
-    except FileNotFoundError:
-        raise NetworkManagerRestoreError("NetworkManager DNS restore snapshot is absent")
-    payload = _load_validated_snapshot(path)
-    for connection in payload["connections"]:
-        _run_nmcli(connection)
-    path.unlink()
-    _fsync_directory(path.parent)
+    if root_snapshot_exists():
+        payload = _load_validated_snapshot(path)
+        _restore_connections(payload["connections"])
+        path.unlink()
+        _fsync_directory(path.parent)
+        return True
+    connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=True)
+    _restore_connections(connections)
     return True
+
+
+def migrate_legacy_snapshot() -> bool:
+    """Promote a trusted legacy runtime snapshot into the root-only authority.
+
+    Run by the installer as root so a pre-existing install can keep its restore
+    ability across an upgrade. The legacy source must meet the same trust bar as
+    the runtime fallback -- root-owned, a regular file, and not writable by group
+    or others -- because a snapshot the unprivileged daemon can write must never
+    be promoted to root authority. It never overwrites an existing root snapshot
+    and never mutates live DNS; an absent, unsafe, corrupt or non-NetworkManager
+    source is a no-op with no root authority created.
+    """
+    if os.geteuid() != 0:
+        raise NetworkManagerRestoreError(
+            "root is required to migrate the NetworkManager DNS restore snapshot"
+        )
+    if root_snapshot_exists():
+        return False
+    try:
+        connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=True)
+    except NetworkManagerRestoreError:
+        return False
+    save_root_snapshot(connections)
+    return True
+
+
+def _hardened_root_directory(path: Path) -> None:
+    # The shared state directory /var/lib/watchdogvpn is setgid (2770), so a
+    # freshly created snapshot directory would inherit the watchdogvpn group and
+    # the setgid bit and would fail the root-only validation below. Force the
+    # exact owner and mode this authority requires. Run by a root caller only.
+    try:
+        os.chown(path, 0, 0)
+    except OSError:
+        pass
+    os.chmod(path, 0o700)
+
+
+def _restore_connections(connections: list[dict[str, str]]) -> None:
+    for connection in connections:
+        _run_nmcli(connection)
+
+
+def _load_legacy_connections(path: Path, *, require_trusted: bool) -> list[dict[str, str]]:
+    # Validate and read through the same open descriptor: the trust decision
+    # (regular file, root-owned, not group/other writable) is applied to the
+    # fstat of the file we actually read, so a source swapped between a prior
+    # inspection and the open can never be promoted. O_NOFOLLOW rejects a
+    # symlinked path outright.
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError as exc:
+        raise NetworkManagerRestoreError("NetworkManager DNS restore snapshot is absent") from exc
+    except OSError as exc:
+        raise NetworkManagerRestoreError(
+            "cannot inspect the legacy NetworkManager DNS restore snapshot"
+        ) from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise NetworkManagerRestoreError(
+                "invalid legacy NetworkManager DNS restore snapshot path"
+            )
+        if require_trusted and not _legacy_snapshot_is_trusted(metadata):
+            raise NetworkManagerRestoreError(
+                "legacy NetworkManager DNS restore snapshot is untrusted"
+            )
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+            payload = json.load(handle)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise NetworkManagerRestoreError(
+            "invalid legacy NetworkManager DNS restore snapshot"
+        ) from exc
+    except OSError as exc:
+        raise NetworkManagerRestoreError(
+            "invalid legacy NetworkManager DNS restore snapshot"
+        ) from exc
+    finally:
+        os.close(descriptor)
+    return _connections_from_runtime_snapshot(payload)
+
+
+def _legacy_snapshot_is_trusted(metadata: os.stat_result) -> bool:
+    # Integrity, not confidentiality: root owns the file and neither the group
+    # nor others may write it, so the unprivileged daemon cannot change the DNS
+    # values this root helper applies.
+    return metadata.st_uid == 0 and (stat.S_IMODE(metadata.st_mode) & 0o022) == 0
+
+
+def _connections_from_runtime_snapshot(payload: Any) -> list[dict[str, str]]:
+    if not isinstance(payload, dict):
+        raise NetworkManagerRestoreError("invalid legacy NetworkManager DNS restore snapshot")
+    inventory = payload.get("inventory")
+    if not isinstance(inventory, dict) or inventory.get("manager") != NETWORK_MANAGER_VALUE:
+        raise NetworkManagerRestoreError("legacy NetworkManager DNS restore snapshot is not NetworkManager")
+    raw_connections = payload.get("network_manager_connections")
+    if not isinstance(raw_connections, list) or not raw_connections:
+        raise NetworkManagerRestoreError("legacy NetworkManager DNS restore snapshot has no connections")
+    connections: list[dict[str, str]] = []
+    seen_uuids: set[str] = set()
+    for item in raw_connections:
+        if not isinstance(item, dict):
+            raise NetworkManagerRestoreError("invalid legacy NetworkManager DNS restore snapshot")
+        uuid = item.get("uuid")
+        if not isinstance(uuid, str) or not _is_uuid(uuid) or uuid in seen_uuids:
+            raise NetworkManagerRestoreError("legacy NetworkManager DNS restore snapshot contains an invalid connection UUID")
+        seen_uuids.add(uuid)
+        connection = {"uuid": uuid}
+        for property_name in DNS_PROPERTIES:
+            value = item.get(LEGACY_DNS_FIELDS[property_name])
+            if not isinstance(value, str):
+                raise NetworkManagerRestoreError("invalid legacy NetworkManager DNS restore snapshot")
+            connection[property_name] = value
+        if connection["ipv4.ignore-auto-dns"] not in {"yes", "no"} or connection["ipv6.ignore-auto-dns"] not in {"yes", "no"}:
+            raise NetworkManagerRestoreError("invalid legacy NetworkManager DNS restore snapshot")
+        connections.append(connection)
+    return connections
 
 
 def _load_validated_snapshot(path: Path) -> dict[str, Any]:
@@ -151,8 +310,14 @@ def _fsync_directory(path: Path) -> None:
 
 
 def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "restore"
     try:
-        restore_root_snapshot()
+        if mode == "restore":
+            restore_root_snapshot()
+        elif mode == "migrate":
+            migrate_legacy_snapshot()
+        else:
+            raise NetworkManagerRestoreError("unknown NetworkManager DNS restore helper mode")
     except NetworkManagerRestoreError:
         return 1
     return 0

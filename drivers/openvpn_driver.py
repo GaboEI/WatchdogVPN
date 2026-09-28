@@ -31,6 +31,97 @@ STATUS_NAME = "openvpn.status"
 CONNECT_READY_TIMEOUT_SECONDS = 10.0
 
 
+@dataclass(frozen=True, slots=True)
+class _DefaultPath:
+    """Expected safe forwarding path derived from the current default route."""
+
+    gateway: str | None
+    interface: str | None
+    onlink: bool
+
+
+_ROUTE_KEYWORDS = frozenset(
+    {
+        "via",
+        "dev",
+        "onlink",
+        "src",
+        "uid",
+        "scope",
+        "proto",
+        "metric",
+        "table",
+        "pref",
+        "realm",
+        "mtu",
+        "advmss",
+        "hoplimit",
+        "initcwnd",
+        "initrwnd",
+        "lifetime",
+        "error",
+        "linkdown",
+        "lock",
+        "quickack",
+        "cache",
+        "default",
+        "unicast",
+        "blackhole",
+        "unreachable",
+        "prohibit",
+        "throw",
+        "local",
+        "broadcast",
+        "anycast",
+        "multicast",
+    }
+)
+
+
+class _RouteTokenError(ValueError):
+    """Route data is ambiguous: a keyword is duplicated, valueless or miskeyed."""
+
+
+def _strict_route_value(tokens: list[str], flag: str) -> str | None:
+    """Return the single value of ``flag``, or ``None`` when absent.
+
+    Ambiguous data is rejected instead of guessed: a duplicated keyword, a
+    keyword with no value, or a keyword immediately followed by another route
+    keyword raises ``_RouteTokenError``.
+    """
+    indexes = [index for index, token in enumerate(tokens) if token == flag]
+    if not indexes:
+        return None
+    if len(indexes) > 1:
+        raise _RouteTokenError(f"duplicate '{flag}' keyword")
+    value_index = indexes[0] + 1
+    if value_index >= len(tokens):
+        raise _RouteTokenError(f"'{flag}' keyword has no value")
+    value = tokens[value_index]
+    if value in _ROUTE_KEYWORDS:
+        raise _RouteTokenError(f"'{flag}' keyword is followed by the '{value}' keyword")
+    return value
+
+
+def _default_path_from_tokens(tokens: list[str]) -> _DefaultPath | None:
+    """Parse gateway, interface and onlink semantics from default-route tokens.
+
+    Returns ``None`` for malformed or ambiguous default-route data (missing
+    value, duplicated keyword or keyword followed by another keyword) so the
+    caller fails closed instead of guessing.
+    """
+    try:
+        gateway = _strict_route_value(tokens, "via")
+        interface = _strict_route_value(tokens, "dev")
+    except _RouteTokenError:
+        return None
+    return _DefaultPath(
+        gateway=gateway,
+        interface=interface,
+        onlink="onlink" in tokens,
+    )
+
+
 @dataclass(slots=True)
 class _BinaryPaths:
     openvpn: tuple[str, str, str, str] = (
@@ -185,20 +276,16 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         if not tokens:
             self.last_error = "OpenVPN endpoint route could not resolve the default route"
             return False
+        expected = _default_path_from_tokens(tokens)
+        if expected is None:
+            self.last_error = "OpenVPN endpoint route default path is malformed or ambiguous"
+            return False
         command = ["ip", "route", "add", route]
-        if "via" in tokens:
-            index = tokens.index("via")
-            if index + 1 >= len(tokens):
-                self.last_error = "OpenVPN endpoint route default gateway is malformed"
-                return False
-            command.extend(["via", tokens[index + 1]])
-        if "dev" in tokens:
-            index = tokens.index("dev")
-            if index + 1 >= len(tokens):
-                self.last_error = "OpenVPN endpoint route default interface is malformed"
-                return False
-            command.extend(["dev", tokens[index + 1]])
-        if "onlink" in tokens:
+        if expected.gateway is not None:
+            command.extend(["via", expected.gateway])
+        if expected.interface is not None:
+            command.extend(["dev", expected.interface])
+        if expected.onlink:
             command.append("onlink")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if result.returncode == 0:
@@ -206,9 +293,64 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return True
         stderr = (result.stderr or "").lower()
         if "file exists" in stderr:
-            return True
+            return self._existing_endpoint_route_is_safe(host, expected)
         self.last_error = "OpenVPN endpoint route protection failed"
         return False
+
+    def _endpoint_route_resolution(self, host: str) -> list[str] | None:
+        """Return the tokens of the kernel's effective resolution for an endpoint."""
+        if not shutil.which("ip"):
+            return None
+        result = subprocess.run(
+            ["ip", "-4", "route", "get", host],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        line = next((item.strip() for item in (result.stdout or "").splitlines() if item.strip()), "")
+        return line.split() if line else None
+
+    def _existing_endpoint_route_is_safe(self, host: str, expected: _DefaultPath) -> bool:
+        """Accept a pre-existing endpoint route only if it follows the default path.
+
+        A route that cannot be resolved, has no outbound interface, or uses a
+        different interface/gateway than the current default route is reported
+        fail-closed. The route is never marked as owned, so cleanup never
+        deletes a route this attempt did not create.
+        """
+        if expected.interface is None:
+            self.last_error = "OpenVPN endpoint route verification has no default interface"
+            return False
+        tokens = self._endpoint_route_resolution(host)
+        if not tokens:
+            self.last_error = "OpenVPN endpoint route could not be verified against the default route"
+            return False
+        try:
+            interface = _strict_route_value(tokens, "dev")
+            gateway = _strict_route_value(tokens, "via")
+        except _RouteTokenError as exc:
+            self.last_error = f"OpenVPN endpoint route resolution is ambiguous: {exc}"
+            return False
+        if not interface:
+            self.last_error = "OpenVPN endpoint route verification found no outbound interface"
+            return False
+        if interface != expected.interface:
+            self.last_error = (
+                "OpenVPN endpoint route points to a different interface than the default route"
+            )
+            return False
+        if expected.gateway is None:
+            if gateway is not None:
+                self.last_error = (
+                    "OpenVPN endpoint route uses a gateway the default route does not"
+                )
+                return False
+        elif gateway != expected.gateway:
+            self.last_error = "OpenVPN endpoint route does not follow the default route gateway"
+            return False
+        return True
 
     def _cleanup_endpoint_route(self) -> None:
         route = self._owned_endpoint_route
@@ -316,32 +458,56 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             self.last_error = "OpenVPN runtime paths are unavailable"
             self._cleanup_runtime()
             return False
-        if not self._protect_remote_endpoint_route(profile):
-            self._cleanup_runtime()
-            return False
-        readiness_options = self._configure_readiness(profile)
         try:
-            status_path.unlink(missing_ok=True)
-        except OSError:
+            if not self._protect_remote_endpoint_route(profile):
+                self._rollback_startup()
+                return False
+            readiness_options = self._configure_readiness(profile)
+            try:
+                status_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            log_file = log_path.open("w", encoding="utf-8")
+            try:
+                self._process = subprocess.Popen(
+                    build_openvpn_command(binary, config_path, runtime_options=readiness_options),
+                    text=True,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+            finally:
+                log_file.close()
+            record_child_process(runtime_dir, "process", self._process.pid, Path(binary).name)
+            self._active_profile = profile
+            if self._wait_for_ready(profile):
+                self._connected_at = datetime.now(timezone.utc)
+                return True
+            self._connected_at = None
+            self.last_error = "OpenVPN readiness timed out or process exited"
+            self._rollback_startup()
+            return False
+        except Exception as exc:
+            self._rollback_startup()
+            self.last_error = f"OpenVPN startup failed: {exc}"
+            return False
+
+    def _rollback_startup(self) -> None:
+        """Undo every effect of a failed startup attempt.
+
+        Stops any spawned process, removes the endpoint route this attempt owns
+        and clears runtime and in-memory state, so the driver is immediately
+        reusable and no route or process residue survives the failure.
+        """
+        try:
+            self.disconnect()
+        except Exception:
             pass
-        log_file = log_path.open("w", encoding="utf-8")
-        self._process = subprocess.Popen(
-            build_openvpn_command(binary, config_path, runtime_options=readiness_options),
-            text=True,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-        log_file.close()
-        record_child_process(runtime_dir, "process", self._process.pid, Path(binary).name)
-        self._active_profile = profile
-        if self._wait_for_ready(profile):
-            self._connected_at = datetime.now(timezone.utc)
-            return True
-        self._connected_at = None
-        self._active_profile = None
-        self.last_error = "OpenVPN readiness timed out or process exited"
-        self.disconnect()
-        return False
+        finally:
+            self._process = None
+            self._active_profile = None
+            self._connected_at = None
+            self._cleanup_endpoint_route()
+            self._cleanup_runtime()
 
     def _wait_for_ready(self, profile: Profile) -> bool:
         deadline = time.monotonic() + CONNECT_READY_TIMEOUT_SECONDS
