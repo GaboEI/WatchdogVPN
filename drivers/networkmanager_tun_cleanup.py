@@ -16,6 +16,12 @@ CONNECTION_TYPE = "tun"
 # authorise its later cleanup. It lives in the root-only state tree instead,
 # readable and writable only by the fixed root helper (never by the daemon).
 OWNED_UUIDS_PATH = Path("/var/lib/watchdogvpn/nm-tun/owned-uuid")
+# Before the ownership registry moved into the durable state tree, the previous
+# helper stored the same root-owned 0600 record under the systemd runtime
+# directory /run/watchdogvpn-nm-tun, which is cleared on reboot. A supported
+# upgrade must promote that trusted legacy record into the durable authority
+# before cleanup needs it.
+LEGACY_OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")
 EXPECTED_REGISTRY_UID = 0
 EXPECTED_REGISTRY_GID = 0
 EXPECTED_REGISTRY_DIR_MODE = 0o700
@@ -89,6 +95,45 @@ def remove_stale_tun_connections() -> bool:
     return True
 
 
+def migrate_legacy_owned_uuid_registry() -> bool:
+    """Promote a trusted legacy runtime registry into the durable authority.
+
+    Run by the installer as root so a pre-existing install keeps its cleanup
+    ability across an upgrade that moved the registry out of volatile /run. The
+    legacy source must meet the same trust bar as the durable authority --
+    root-owned, a regular file, not writable by group or others, reached without
+    symlink traversal, and a single unambiguous UUID -- because a registry the
+    unprivileged daemon could write must never be promoted to root authority. It
+    never overwrites an existing durable registry, never removes the legacy
+    source, and never authorises a delete on its own; an absent, unsafe,
+    malformed or ambiguous source is a no-op with no authority created.
+    """
+    if os.geteuid() != 0:
+        raise NetworkManagerTunCleanupError(
+            "root is required to migrate the WatchdogVPN NetworkManager TUN ownership registry"
+        )
+    if _owned_uuid_registry_present():
+        return False
+    try:
+        legacy_uuid = _read_registry_uuid(LEGACY_OWNED_UUIDS_PATH)
+    except NetworkManagerTunCleanupError:
+        return False
+    if legacy_uuid is None:
+        return False
+    _write_owned_uuid_registry(legacy_uuid)
+    return True
+
+
+def _owned_uuid_registry_present() -> bool:
+    try:
+        os.lstat(OWNED_UUIDS_PATH)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
 def _has_product_tun_candidate(rows: list[tuple[str, str, str, str]]) -> bool:
     return any(
         name == CONNECTION_NAME and connection_type == CONNECTION_TYPE
@@ -119,7 +164,7 @@ def _write_owned_uuid_registry(connection_uuid: str) -> None:
     tmp_name: str | None = None
     try:
         _ensure_registry_parent()
-        parent_fd = _open_registry_parent()
+        parent_fd = _open_directory(OWNED_UUIDS_PATH.parent)
         _validate_registry_parent_fd(parent_fd)
         payload = f"{connection_uuid}\n".encode("ascii")
         for _attempt in range(10):
@@ -159,16 +204,21 @@ def _write_owned_uuid_registry(connection_uuid: str) -> None:
 
 
 def _read_owned_uuid_registry() -> str | None:
+    return _read_registry_uuid(OWNED_UUIDS_PATH)
+
+
+def _read_registry_uuid(registry_path: Path) -> str | None:
     parent_fd: int | None = None
     file_fd: int | None = None
     try:
-        parent_fd = _open_registry_parent()
+        parent_fd = _open_directory(registry_path.parent)
         file_fd = os.open(
-            OWNED_UUIDS_PATH.name,
+            registry_path.name,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=parent_fd,
         )
     except FileNotFoundError:
+        # An absent registry means no authority exists; it is not an error.
         return None
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot inspect WatchdogVPN NetworkManager TUN ownership") from exc
@@ -202,7 +252,7 @@ def _read_owned_uuid_registry() -> str | None:
 def _remove_owned_uuid_registry() -> None:
     parent_fd: int | None = None
     try:
-        parent_fd = _open_registry_parent()
+        parent_fd = _open_directory(OWNED_UUIDS_PATH.parent)
         _validate_registry_parent_fd(parent_fd)
         os.unlink(OWNED_UUIDS_PATH.name, dir_fd=parent_fd)
         os.fsync(parent_fd)
@@ -244,10 +294,10 @@ def _claim_registry_parent_ownership() -> None:
     os.chmod(OWNED_UUIDS_PATH.parent, EXPECTED_REGISTRY_DIR_MODE)
 
 
-def _open_registry_parent() -> int:
+def _open_directory(directory: Path) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        return os.open(OWNED_UUIDS_PATH.parent, flags)
+        return os.open(directory, flags)
     except FileNotFoundError:
         raise
     except OSError as exc:
@@ -317,6 +367,12 @@ def main() -> int:
             # treat a possibly-unclean teardown as done.
             if not remove_stale_tun_connections():
                 return 1
+        elif mode == "migrate" or mode.endswith("migrate"):
+            # Installer-only step: promote a trusted legacy /run registry into
+            # the durable authority. A no-op (absent/unsafe/none) is success;
+            # only a failed write surfaces as an error so the upgrade fails
+            # loudly instead of silently losing cleanup authority.
+            migrate_legacy_owned_uuid_registry()
         else:
             raise NetworkManagerTunCleanupError("unknown NetworkManager TUN helper mode")
     except NetworkManagerTunCleanupError:

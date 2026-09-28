@@ -157,6 +157,11 @@ prepare_networkmanager_tun_cleanup_state() {
     run_step sudo chown root:root "$state_dir/owned-uuid"
     run_step sudo chmod 0600 "$state_dir/owned-uuid"
   fi
+  # Promote a trusted legacy runtime TUN ownership registry into the durable
+  # root-only authority so a pre-existing install keeps its cleanup ability
+  # across the upgrade. It is a no-op when a durable registry already exists or
+  # when no trustworthy legacy registry is present.
+  run_step sudo /usr/local/bin/watchdogvpn-nm-tun-cleanup migrate
 }
 
 # Detects the interface currently carrying the default IPv4 route - the same

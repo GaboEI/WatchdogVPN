@@ -10,6 +10,7 @@ from unittest.mock import patch
 import drivers.networkmanager_tun_cleanup as nm_tun_cleanup
 from drivers.networkmanager_tun_cleanup import (
     NetworkManagerTunCleanupError,
+    migrate_legacy_owned_uuid_registry,
     record_active_tun_connection,
     remove_stale_tun_connections,
 )
@@ -447,6 +448,231 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
             "/var/lib/watchdogvpn/nm-tun/owned-uuid",
         )
         self.assertFalse(str(nm_tun_cleanup.OWNED_UUIDS_PATH).startswith("/run/"))
+
+    def test_legacy_owned_uuid_path_is_the_established_volatile_location(self) -> None:
+        self.assertEqual(
+            str(nm_tun_cleanup.LEGACY_OWNED_UUIDS_PATH),
+            "/run/watchdogvpn-nm-tun/owned-uuid",
+        )
+
+    # --- S.1: legacy /run UUID migration and cleanup authority -------------
+
+    def test_migrate_trusted_legacy_registry_promotes_into_durable_authority(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertTrue(migrate_legacy_owned_uuid_registry())
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
+        self.assertEqual(self.registry_path.stat().st_mode & 0o777, 0o600)
+        # The recoverable trusted source is preserved, not consumed.
+        self.assertEqual(legacy_path.read_text(encoding="ascii"), UUID_ONE)
+
+    def test_migrated_legacy_authority_deletes_only_its_uuid(self) -> None:
+        # Requirement 1: trusted legacy state migrates before cleanup and the
+        # cleanup deletes only the migrated UUID, never a foreign same-name one.
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        listing = "\n".join((
+            f"{UUID_ONE}:wdvpn-tun0:tun",
+            f"{UUID_TWO}:wdvpn-tun0:tun",
+        ))
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertTrue(migrate_legacy_owned_uuid_registry())
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.subprocess.run"
+        ) as run:
+            run.side_effect = [
+                subprocess.CompletedProcess([], 0, stdout=listing, stderr=""),
+                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            ]
+            self.assertTrue(remove_stale_tun_connections())
+
+        delete_commands = [
+            call.args[0] for call in run.call_args_list if "delete" in call.args[0]
+        ]
+        self.assertEqual(
+            delete_commands,
+            [["nmcli", "connection", "delete", "uuid", UUID_ONE]],
+        )
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_is_noop_when_valid_durable_registry_exists(self) -> None:
+        # Requirement 3: a valid durable state stays valid without legacy input.
+        self.registry_dir.mkdir(mode=0o700)
+        self.registry_path.write_text(f"{UUID_TWO}\n", encoding="ascii")
+        self.registry_path.chmod(0o600)
+        absent_legacy = Path(self.tmpdir.name) / "absent-legacy" / "owned-uuid"
+
+        with self._patched_registry_and_legacy(absent_legacy), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+            self.assertEqual(nm_tun_cleanup._read_owned_uuid_registry(), UUID_TWO)
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_TWO}\n")
+
+    def test_migrate_absent_legacy_is_noop_without_authority(self) -> None:
+        absent_legacy = Path(self.tmpdir.name) / "absent-legacy" / "owned-uuid"
+        with self._patched_registry_and_legacy(absent_legacy), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_requires_root(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=1000
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                migrate_legacy_owned_uuid_registry()
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_malformed_or_ambiguous_legacy_content(self) -> None:
+        # Requirement 4: malformed, duplicate and multiline legacy input must
+        # never be promoted into cleanup authority.
+        for content in ("not-a-uuid\n", "\n", "  \n", f"{UUID_ONE}\n{UUID_TWO}\n"):
+            with self.subTest(content=content):
+                legacy_path = self._write_legacy_registry(content)
+                with self._patched_registry_and_legacy(legacy_path), patch(
+                    "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+                ):
+                    self.assertFalse(migrate_legacy_owned_uuid_registry())
+                self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_unsafe_legacy_file_permissions(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        legacy_path.chmod(0o644)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_unsafe_legacy_ownership(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.EXPECTED_REGISTRY_UID", os.getuid() + 1
+        ), patch("drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_non_regular_legacy_entry(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        legacy_path.unlink()
+        legacy_path.mkdir(mode=0o700)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_symlink_legacy_entry(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        target = Path(self.tmpdir.name) / "legacy-target"
+        legacy_path.rename(target)
+        legacy_path.symlink_to(target)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_migrate_rejects_unsafe_legacy_directory(self) -> None:
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        legacy_path.parent.chmod(0o755)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_rejected_legacy_never_authorizes_a_deletion(self) -> None:
+        # Requirement 4 (deletion half): an untrusted legacy source, even with a
+        # product-shaped residual present, must issue no nmcli delete.
+        legacy_path = self._write_legacy_registry("not-a-uuid\n")
+        listing = f"{UUID_ONE}:wdvpn-tun0:tun\n"
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch("drivers.networkmanager_tun_cleanup.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=listing, stderr="")
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+            self.assertFalse(remove_stale_tun_connections())
+
+        self.assertFalse(any("delete" in call.args[0] for call in run.call_args_list))
+
+    def test_migrate_write_failure_keeps_source_without_creating_authority(self) -> None:
+        # Requirement 5: a failed durable write leaves no authority and does not
+        # consume the still-recoverable trusted legacy source.
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch(
+            "drivers.networkmanager_tun_cleanup.os.rename", side_effect=OSError("boom")
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                migrate_legacy_owned_uuid_registry()
+
+        self.assertFalse(self.registry_path.exists())
+        self.assertFalse(
+            any(
+                path.name.startswith(f".{self.registry_path.name}")
+                for path in self.registry_dir.glob(".*")
+            )
+        )
+        self.assertEqual(legacy_path.read_text(encoding="ascii"), UUID_ONE)
+
+    def test_migrated_authority_never_removes_foreign_same_name_profile(self) -> None:
+        # Requirement 6: only the migrated UUID authorises a deletion; a foreign
+        # profile that merely shares the fixed name is never removed.
+        legacy_path = self._write_legacy_registry(UUID_ONE)
+        listing = f"{UUID_TWO}:wdvpn-tun0:tun\n"
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ):
+            self.assertTrue(migrate_legacy_owned_uuid_registry())
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.subprocess.run"
+        ) as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=listing, stderr="")
+            self.assertTrue(remove_stale_tun_connections())
+
+        self.assertFalse(any("delete" in call.args[0] for call in run.call_args_list))
+
+    def test_main_dispatches_migrate_mode(self) -> None:
+        with patch.object(nm_tun_cleanup.sys, "argv", ["wrapper", "migrate"]), patch(
+            "drivers.networkmanager_tun_cleanup.migrate_legacy_owned_uuid_registry",
+            return_value=True,
+        ) as migrate:
+            self.assertEqual(nm_tun_cleanup.main(), 0)
+        migrate.assert_called_once_with()
+
+    def _write_legacy_registry(self, content: str) -> Path:
+        legacy_dir = Path(self.tmpdir.name) / "run-watchdogvpn-nm-tun"
+        legacy_dir.mkdir(mode=0o700, exist_ok=True)
+        legacy_path = legacy_dir / "owned-uuid"
+        if legacy_path.exists() or legacy_path.is_symlink():
+            legacy_path.unlink()
+        legacy_path.write_text(content, encoding="ascii")
+        legacy_path.chmod(0o600)
+        return legacy_path
+
+    def _patched_registry_and_legacy(self, legacy_path: Path):
+        return patch.multiple(
+            "drivers.networkmanager_tun_cleanup",
+            OWNED_UUIDS_PATH=self.registry_path,
+            LEGACY_OWNED_UUIDS_PATH=legacy_path,
+            EXPECTED_REGISTRY_UID=os.getuid(),
+            EXPECTED_REGISTRY_GID=os.getgid(),
+            EXPECTED_REGISTRY_DIR_MODE=0o700,
+            EXPECTED_REGISTRY_FILE_MODE=0o600,
+        )
 
     def _patched_registry(self):
         return patch.multiple(

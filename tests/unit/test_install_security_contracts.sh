@@ -136,6 +136,8 @@ assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'ReadWrit
 assert_not_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectory=watchdogvpn-nm-tun' "TUN cleanup state must not depend on volatile /run"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_networkmanager_tun_cleanup_state' "runtime install must create the durable root-only TUN ownership registry"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'watchdogvpn-nm-dns-restore migrate' "runtime install must promote a legacy DNS snapshot into the durable root authority"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'watchdogvpn-nm-tun-cleanup migrate' "runtime install must promote a trusted legacy TUN ownership registry into the durable root authority"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'LEGACY_OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")' "TUN migration must read the established legacy volatile registry path"
 assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'OWNED_UUIDS_PATH = Path("/var/lib/watchdogvpn/nm-tun/owned-uuid")' "TUN ownership registry must live in the durable root-only state tree, outside /run"
 assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.O_EXCL' "TUN ownership registry temp creation must reject precreated paths"
 assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'O_NOFOLLOW' "TUN ownership registry must reject symlink traversal"
