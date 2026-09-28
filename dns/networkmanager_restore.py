@@ -64,13 +64,20 @@ def _snapshot_present(directory_fd: int, name: str) -> bool:
 
 
 def root_snapshot_exists() -> bool:
+    # Best-effort probe used by the unprivileged daemon: it must return a bool
+    # rather than raise when the root-only directory cannot be opened (the
+    # daemon cannot traverse a 0700 root directory) or is otherwise unsafe. An
+    # unsafe directory therefore reads as "no root snapshot" here; the fixed
+    # root helper still fails closed when it actually acts.
     path = root_snapshot_path()
     try:
         directory_fd = _open_root_snapshot_directory(create=False)
-    except FileNotFoundError:
+    except (FileNotFoundError, NetworkManagerRestoreError, OSError):
         return False
     try:
         return _snapshot_present(directory_fd, path.name)
+    except NetworkManagerRestoreError:
+        return False
     finally:
         os.close(directory_fd)
 
