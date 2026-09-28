@@ -75,6 +75,40 @@ class PrivilegedStateDirectoryTests(unittest.TestCase):
         self.assertTrue(target.is_dir())
         self.assertFalse((target / "snapshot.json").exists())
 
+    def test_setgid_parent_child_is_normalized_to_0700(self) -> None:
+        base = Path(self._tmp.name) / "setgid-parent"
+        base.mkdir(mode=0o700)
+        os.chmod(base, 0o2770)
+        target = base / "nm-tun"
+        with self._patched_identity():
+            prepare_state_directory(target)
+        self.assertEqual(target.lstat().st_mode & 0o7777, 0o700)
+
+    def test_swap_during_metadata_application_fails_closed(self) -> None:
+        sentinel = Path(self._tmp.name) / "swap-sentinel"
+        sentinel.mkdir(mode=0o700)
+        (sentinel / "marker").write_text("untouched\n", encoding="ascii")
+
+        def meta() -> tuple:
+            info = sentinel.lstat()
+            return (info.st_mode & 0o777, info.st_uid, info.st_gid, info.st_mtime_ns)
+
+        before = meta()
+        target = self.parent / "nm-tun"
+        real_apply = privileged_state._apply_directory_metadata
+
+        def swapping_apply(child_fd, uid, gid, mode):
+            os.rename(target, str(target) + ".moved")
+            os.symlink(sentinel, target)
+            real_apply(child_fd, uid, gid, mode)
+
+        with self._patched_identity(), mock.patch.object(
+            privileged_state, "_apply_directory_metadata", side_effect=swapping_apply
+        ):
+            with self.assertRaises(PrivilegedStateError):
+                prepare_state_directory(target)
+        self.assertEqual(meta(), before)
+
     # --- negative cases -----------------------------------------------------
 
     def _assert_rejected_without_touching(self, target: Path) -> None:

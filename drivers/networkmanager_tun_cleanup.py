@@ -8,6 +8,8 @@ import stat
 from pathlib import Path
 from uuid import UUID
 
+import privileged_state
+
 
 CONNECTION_NAME = "wdvpn-tun0"
 CONNECTION_TYPE = "tun"
@@ -289,32 +291,25 @@ def _remove_owned_uuid_registry() -> None:
 
 
 def _ensure_registry_parent() -> None:
+    # Delegate creation and validation to the shared descriptor-relative
+    # primitive. Callers re-open the parent with O_NOFOLLOW before reading,
+    # writing or removing owned-uuid, so a swap performed after this returns is
+    # rejected instead of followed.
+    child_fd: int | None = None
     try:
-        try:
-            parent_stat = OWNED_UUIDS_PATH.parent.lstat()
-        except FileNotFoundError:
-            OWNED_UUIDS_PATH.parent.mkdir(mode=EXPECTED_REGISTRY_DIR_MODE, parents=True, exist_ok=False)
-            _claim_registry_parent_ownership()
-        else:
-            if not stat.S_ISDIR(parent_stat.st_mode):
-                raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership directory")
-    except OSError as exc:
-        raise NetworkManagerTunCleanupError("cannot prepare WatchdogVPN NetworkManager TUN ownership directory") from exc
-
-
-def _claim_registry_parent_ownership() -> None:
-    # The shared state directory /var/lib/watchdogvpn is setgid (2770), so a
-    # freshly created subdirectory inherits both the watchdogvpn group and the
-    # setgid bit instead of a plain 0700 root directory. The registry must be
-    # a root-owned, root-only authority; set the exact owner and mode here so
-    # the directory passes the same validation the cleanup path enforces. A
-    # failure is not swallowed into a weaker mode: the later descriptor
-    # validation fails closed on anything unsafe.
-    try:
-        os.chown(OWNED_UUIDS_PATH.parent, EXPECTED_REGISTRY_UID, EXPECTED_REGISTRY_GID)
-    except (AttributeError, PermissionError):
-        pass
-    os.chmod(OWNED_UUIDS_PATH.parent, EXPECTED_REGISTRY_DIR_MODE)
+        child_fd = privileged_state.open_state_directory(
+            OWNED_UUIDS_PATH.parent,
+            uid=EXPECTED_REGISTRY_UID,
+            gid=EXPECTED_REGISTRY_GID,
+            directory_mode=EXPECTED_REGISTRY_DIR_MODE,
+        )
+    except privileged_state.PrivilegedStateError as exc:
+        raise NetworkManagerTunCleanupError(
+            "unsafe WatchdogVPN NetworkManager TUN ownership directory"
+        ) from exc
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
 
 
 def _open_directory(directory: Path) -> int:

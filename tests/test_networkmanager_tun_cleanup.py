@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import drivers.networkmanager_tun_cleanup as nm_tun_cleanup
+import privileged_state
 from drivers.networkmanager_tun_cleanup import (
     NetworkManagerTunCleanupError,
     migrate_legacy_owned_uuid_registry,
@@ -442,6 +443,34 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
 
         parent_mode = (base / "nm-tun").stat().st_mode & 0o7777
         self.assertEqual(parent_mode, 0o700)
+
+    def test_write_registry_fails_closed_when_parent_is_swapped(self) -> None:
+        # F-S2-01: a swap of the TUN registry directory for a symlink after it
+        # is created must be rejected by the no-follow re-open before any
+        # registry read/write, and the symlink target must stay untouched.
+        sentinel = Path(self.tmpdir.name) / "tun-sentinel"
+        sentinel.mkdir(mode=0o700)
+        (sentinel / "marker").write_text("untouched\n", encoding="ascii")
+
+        def meta() -> tuple:
+            info = sentinel.lstat()
+            return (info.st_mode & 0o777, info.st_uid, info.st_gid, info.st_mtime_ns)
+
+        before = meta()
+        real_open = privileged_state.open_state_directory
+
+        def swapping_open(directory, **kwargs):
+            descriptor = real_open(directory, **kwargs)
+            os.rename(directory, str(directory) + ".moved")
+            os.symlink(sentinel, directory)
+            return descriptor
+
+        with self._patched_registry(), patch(
+            "privileged_state.open_state_directory", side_effect=swapping_open
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                nm_tun_cleanup._write_owned_uuid_registry(UUID_ONE)
+        self.assertEqual(meta(), before)
 
     def test_owned_uuid_path_is_durable_outside_run(self) -> None:
         self.assertEqual(

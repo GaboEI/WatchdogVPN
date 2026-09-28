@@ -11,14 +11,16 @@ from unittest.mock import patch
 import dns.networkmanager_restore as nm_restore
 from dns.networkmanager_restore import (
     NetworkManagerRestoreError,
-    _hardened_root_directory,
     _legacy_snapshot_is_trusted,
     _load_validated_snapshot,
     _validate_metadata,
     _validate_snapshot,
     migrate_legacy_snapshot,
     restore_root_snapshot,
+    save_root_snapshot,
 )
+
+import privileged_state
 
 
 UUID = "11111111-1111-1111-1111-111111111111"
@@ -123,16 +125,57 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         self.assertFalse(any(token in " ".join(command) for token in ("gateway", "route", "proxy", "dns-search", "connection.id")))
 
 
-    def test_hardened_root_directory_clears_inherited_setgid(self) -> None:
-        # The snapshot directory is created under the setgid shared state
-        # directory; it must end up exactly 0700 or the root-only validation
-        # rejects it. Same defect class as the NetworkManager TUN registry.
+    def _sentinel_meta(self, path: Path) -> tuple:
+        info = os.lstat(path)
+        return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, info.st_mtime_ns)
+
+    def test_save_root_snapshot_creates_root_only_directory_and_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            state = Path(tmp) / "nm-dns-restore"
-            state.mkdir(mode=0o700)
-            os.chmod(state, 0o2770)
-            _hardened_root_directory(state)
-            self.assertEqual(state.stat().st_mode & 0o7777, 0o700)
+            parent = Path(tmp) / "watchdogvpn"
+            parent.mkdir(mode=0o700)
+            snapshot_path = parent / "nm-dns-restore" / "snapshot.json"
+            with patch.dict(
+                os.environ, {"WATCHDOGVPN_NM_DNS_RESTORE_SNAPSHOT": str(snapshot_path)}
+            ), patch.object(nm_restore.os, "geteuid", return_value=0), patch.multiple(
+                privileged_state, EXPECTED_STATE_UID=os.getuid(), EXPECTED_STATE_GID=os.getgid()
+            ):
+                save_root_snapshot(snapshot()["connections"])
+            directory = snapshot_path.parent
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(snapshot_path.stat().st_mode), 0o600)
+            self.assertEqual(json.loads(snapshot_path.read_text())["version"], 1)
+
+    def test_save_root_snapshot_fails_closed_when_directory_is_swapped(self) -> None:
+        # F-S2-01: a swap of nm-dns-restore for a symlink after the directory is
+        # opened must not redirect a pathname chown/chmod; the write stays on the
+        # validated descriptor and the identity re-confirmation fails closed,
+        # leaving the symlink target untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "watchdogvpn"
+            parent.mkdir(mode=0o700)
+            sentinel = Path(tmp) / "dns-sentinel"
+            sentinel.mkdir(mode=0o700)
+            (sentinel / "marker").write_text("untouched\n", encoding="ascii")
+            before = self._sentinel_meta(sentinel)
+            snapshot_path = parent / "nm-dns-restore" / "snapshot.json"
+            real_open = privileged_state.open_state_directory
+
+            def swapping_open(directory, **kwargs):
+                descriptor = real_open(directory, **kwargs)
+                os.rename(directory, str(directory) + ".moved")
+                os.symlink(sentinel, directory)
+                return descriptor
+
+            with patch.dict(
+                os.environ, {"WATCHDOGVPN_NM_DNS_RESTORE_SNAPSHOT": str(snapshot_path)}
+            ), patch.object(nm_restore.os, "geteuid", return_value=0), patch.multiple(
+                privileged_state, EXPECTED_STATE_UID=os.getuid(), EXPECTED_STATE_GID=os.getgid()
+            ), patch.object(
+                privileged_state, "open_state_directory", side_effect=swapping_open
+            ):
+                with self.assertRaises(NetworkManagerRestoreError):
+                    save_root_snapshot(snapshot()["connections"])
+            self.assertEqual(self._sentinel_meta(sentinel), before)
 
     def test_legacy_snapshot_trust_requires_root_and_no_group_or_other_write(self) -> None:
         def stat_result(mode: int, uid: int) -> os.stat_result:

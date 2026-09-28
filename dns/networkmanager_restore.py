@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import stat
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import privileged_state
 from config.paths import resolve_config_dir
 
 
@@ -42,14 +44,35 @@ def root_snapshot_path() -> Path:
     return Path(override) if override else SNAPSHOT_PATH
 
 
-def root_snapshot_exists() -> bool:
+def _open_root_snapshot_directory(*, create: bool) -> int:
     try:
-        os.lstat(root_snapshot_path())
+        return privileged_state.open_state_directory(root_snapshot_path().parent, create=create)
+    except privileged_state.PrivilegedStateError as exc:
+        raise NetworkManagerRestoreError(
+            "unsafe NetworkManager DNS restore state directory"
+        ) from exc
+
+
+def _snapshot_present(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
     except FileNotFoundError:
         return False
-    except OSError:
-        return False
+    except OSError as exc:
+        raise NetworkManagerRestoreError("cannot inspect NetworkManager DNS restore snapshot") from exc
     return True
+
+
+def root_snapshot_exists() -> bool:
+    path = root_snapshot_path()
+    try:
+        directory_fd = _open_root_snapshot_directory(create=False)
+    except FileNotFoundError:
+        return False
+    try:
+        return _snapshot_present(directory_fd, path.name)
+    finally:
+        os.close(directory_fd)
 
 
 def legacy_snapshot_path() -> Path:
@@ -67,20 +90,62 @@ def save_root_snapshot(connections: list[dict[str, str]]) -> None:
     payload = {"version": SNAPSHOT_VERSION, "connections": connections}
     _validate_snapshot(payload)
     path = root_snapshot_path()
-    if not path.parent.exists():
-        path.parent.mkdir(mode=0o700, parents=True)
-        _hardened_root_directory(path.parent)
-    _validate_metadata(os.lstat(path.parent), path.parent, 0o700, directory=True)
-    temporary = path.with_name(f".{path.name}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    directory_fd = _open_root_snapshot_directory(create=True)
     try:
-        os.fchmod(descriptor, 0o600)
-        os.write(descriptor, json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-        os.fsync(descriptor)
+        _write_snapshot_at(directory_fd, path.name, payload)
+        try:
+            privileged_state.confirm_state_directory_identity(path.parent, directory_fd)
+        except privileged_state.PrivilegedStateError as exc:
+            raise NetworkManagerRestoreError(
+                "unsafe NetworkManager DNS restore state directory"
+            ) from exc
     finally:
-        os.close(descriptor)
-    os.replace(temporary, path)
-    _fsync_directory(path.parent)
+        os.close(directory_fd)
+
+
+def _write_snapshot_at(directory_fd: int, name: str, payload: dict[str, Any]) -> None:
+    # Every step is relative to the validated directory descriptor: the temp
+    # file is created with O_EXCL | O_NOFOLLOW inside the descriptor, renamed
+    # over the target inside the same descriptor, and the descriptor is fsynced.
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    tmp_name: str | None = None
+    descriptor: int | None = None
+    try:
+        for _attempt in range(10):
+            candidate = ".%s.%d.%s.tmp" % (name, os.getpid(), secrets.token_hex(8))
+            try:
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=directory_fd,
+                )
+                tmp_name = candidate
+                break
+            except FileExistsError:
+                descriptor = None
+        if descriptor is None or tmp_name is None:
+            raise NetworkManagerRestoreError("cannot allocate NetworkManager DNS restore snapshot")
+        try:
+            os.write(descriptor, data)
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+            descriptor = None
+        os.rename(tmp_name, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        tmp_name = None
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise NetworkManagerRestoreError("cannot save NetworkManager DNS restore snapshot") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name, dir_fd=directory_fd)
+            except OSError:
+                pass
 
 
 def restore_root_snapshot() -> bool:
@@ -98,12 +163,27 @@ def restore_root_snapshot() -> bool:
     if root_snapshot_exists():
         payload = _load_validated_snapshot(path)
         _restore_connections(payload["connections"])
-        path.unlink()
-        _fsync_directory(path.parent)
+        _unlink_snapshot(path)
         return True
     connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=True)
     _restore_connections(connections)
     return True
+
+
+def _unlink_snapshot(path: Path) -> None:
+    try:
+        directory_fd = _open_root_snapshot_directory(create=False)
+    except FileNotFoundError:
+        return
+    try:
+        os.unlink(path.name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise NetworkManagerRestoreError("cannot remove NetworkManager DNS restore snapshot") from exc
+    finally:
+        os.close(directory_fd)
 
 
 def migrate_legacy_snapshot() -> bool:
@@ -129,18 +209,6 @@ def migrate_legacy_snapshot() -> bool:
         return False
     save_root_snapshot(connections)
     return True
-
-
-def _hardened_root_directory(path: Path) -> None:
-    # The shared state directory /var/lib/watchdogvpn is setgid (2770), so a
-    # freshly created snapshot directory would inherit the watchdogvpn group and
-    # the setgid bit and would fail the root-only validation below. Force the
-    # exact owner and mode this authority requires. Run by a root caller only.
-    try:
-        os.chown(path, 0, 0)
-    except OSError:
-        pass
-    os.chmod(path, 0o700)
 
 
 def _restore_connections(connections: list[dict[str, str]]) -> None:
@@ -225,28 +293,25 @@ def _connections_from_runtime_snapshot(payload: Any) -> list[dict[str, str]]:
 
 
 def _load_validated_snapshot(path: Path) -> dict[str, Any]:
-    _validate_snapshot_path(path)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
-        metadata = os.fstat(descriptor)
-        _validate_metadata(metadata, path, 0o600)
-        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
-            payload = json.load(handle)
+        directory_fd = _open_root_snapshot_directory(create=False)
+    except FileNotFoundError as exc:
+        raise NetworkManagerRestoreError("NetworkManager DNS restore snapshot is absent") from exc
+    try:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        try:
+            metadata = os.fstat(descriptor)
+            _validate_metadata(metadata, path, 0o600)
+            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+                payload = json.load(handle)
+        finally:
+            os.close(descriptor)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise NetworkManagerRestoreError("invalid NetworkManager DNS restore snapshot") from exc
     finally:
-        os.close(descriptor)
+        os.close(directory_fd)
     _validate_snapshot(payload)
     return payload
-
-
-def _validate_snapshot_path(path: Path) -> None:
-    parent = path.parent
-    try:
-        _validate_metadata(os.lstat(parent), parent, 0o700, directory=True)
-        _validate_metadata(os.lstat(path), path, 0o600)
-    except OSError as exc:
-        raise NetworkManagerRestoreError("invalid NetworkManager DNS restore snapshot path") from exc
 
 
 def _validate_metadata(metadata: os.stat_result, path: Path, mode: int, directory: bool = False) -> None:
@@ -299,14 +364,6 @@ def _run_nmcli(connection: dict[str, str]) -> None:
         raise NetworkManagerRestoreError("NetworkManager DNS restore failed") from exc
     if completed.returncode != 0:
         raise NetworkManagerRestoreError("NetworkManager DNS restore failed")
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def main() -> int:
