@@ -43,5 +43,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 "$ROOT_DIR/scripts/generate_cli_inventory.py" --check
 python3 "$ROOT_DIR/tests/unit/test_tui_modules.py"
 python3 "$ROOT_DIR/tests/test_tui_terminal_capabilities.py"
+python3 "$ROOT_DIR/tests/test_privileged_state.py"
 
 echo "unit behavior checks passed"

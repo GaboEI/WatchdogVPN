@@ -26,6 +26,7 @@ PYTHON_RUNTIME_PACKAGES=(
 PYTHON_RUNTIME_SUPPORT_FILES=(
   doctor.sh
   uninstall.sh
+  privileged_state.py
 )
 PYTHON_RUNTIME_SUPPORT_DIRS=(
   lib
@@ -111,6 +112,7 @@ install_runtime_files() {
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-register drivers.networkmanager_tun_cleanup
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-state-guard privileged_state
 
   install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
@@ -130,13 +132,10 @@ install_runtime_files() {
 
 prepare_networkmanager_dns_restore_state() {
   local state_dir="/var/lib/watchdogvpn/nm-dns-restore"
-  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
-  run_step sudo chmod g-s "$state_dir"
-  run_step sudo chmod 0700 "$state_dir"
-  if root_path_exists "$state_dir/snapshot.json"; then
-    run_step sudo chown root:root "$state_dir/snapshot.json"
-    run_step sudo chmod 0600 "$state_dir/snapshot.json"
-  fi
+  # One no-follow, descriptor-relative primitive creates the root-only 0700
+  # directory and validates an existing root-only snapshot.json without ever
+  # following a pre-created symlink or mutating a pathname after the check.
+  run_step sudo /usr/local/bin/watchdogvpn-state-guard prepare "$state_dir" snapshot.json
   # Promote a legacy runtime DNS snapshot into the durable root-only restore
   # authority so a pre-existing install keeps its restore ability across the
   # upgrade. It is a no-op when a root snapshot already exists or when no
@@ -150,13 +149,10 @@ prepare_networkmanager_dns_restore_state() {
 # helper can read it after a reboot while the daemon never can.
 prepare_networkmanager_tun_cleanup_state() {
   local state_dir="/var/lib/watchdogvpn/nm-tun"
-  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
-  run_step sudo chmod g-s "$state_dir"
-  run_step sudo chmod 0700 "$state_dir"
-  if root_path_exists "$state_dir/owned-uuid"; then
-    run_step sudo chown root:root "$state_dir/owned-uuid"
-    run_step sudo chmod 0600 "$state_dir/owned-uuid"
-  fi
+  # Same shared no-follow primitive as the DNS restore state: create the
+  # root-only 0700 directory and validate an existing root-only owned-uuid
+  # registry without following a pre-created symlink.
+  run_step sudo /usr/local/bin/watchdogvpn-state-guard prepare "$state_dir" owned-uuid
   # Promote a trusted legacy runtime TUN ownership registry into the durable
   # root-only authority so a pre-existing install keeps its cleanup ability
   # across the upgrade. It is a no-op when a durable registry already exists or
