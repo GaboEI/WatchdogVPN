@@ -17,6 +17,7 @@ from dns.networkmanager_restore import (
     _validate_snapshot,
     migrate_legacy_snapshot,
     restore_root_snapshot,
+    root_snapshot_exists,
     save_root_snapshot,
 )
 
@@ -139,7 +140,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
             ), patch.object(nm_restore.os, "geteuid", return_value=0), patch.multiple(
                 privileged_state, EXPECTED_STATE_UID=os.getuid(), EXPECTED_STATE_GID=os.getgid()
             ):
-                save_root_snapshot(snapshot()["connections"])
+                save_root_snapshot(snapshot()["connections"])  # type: ignore[arg-type]
             directory = snapshot_path.parent
             self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(snapshot_path.stat().st_mode), 0o600)
@@ -174,7 +175,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
                 privileged_state, "open_state_directory", side_effect=swapping_open
             ):
                 with self.assertRaises(NetworkManagerRestoreError):
-                    save_root_snapshot(snapshot()["connections"])
+                    save_root_snapshot(snapshot()["connections"])  # type: ignore[arg-type]
             self.assertEqual(self._sentinel_meta(sentinel), before)
 
     def test_legacy_snapshot_trust_requires_root_and_no_group_or_other_write(self) -> None:
@@ -195,7 +196,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
-            with patch.object(nm_restore, "root_snapshot_exists", return_value=False), patch.object(
+            with patch.object(nm_restore, "root_snapshot_path", return_value=Path(tmp) / "absent-root" / "nm-dns-restore" / "snapshot.json"), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
             ), patch.object(nm_restore, "_legacy_snapshot_is_trusted", return_value=True), patch(
                 "dns.networkmanager_restore.subprocess.run"
@@ -216,7 +217,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
-            with patch.object(nm_restore, "root_snapshot_exists", return_value=False), patch.object(
+            with patch.object(nm_restore, "root_snapshot_path", return_value=Path(tmp) / "absent-root" / "nm-dns-restore" / "snapshot.json"), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
             ), patch.object(nm_restore, "_legacy_snapshot_is_trusted", return_value=False), patch(
                 "dns.networkmanager_restore.subprocess.run"
@@ -229,7 +230,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
     def test_restore_reports_absent_snapshot_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "missing.json"
-            with patch.object(nm_restore, "root_snapshot_exists", return_value=False), patch.object(
+            with patch.object(nm_restore, "root_snapshot_path", return_value=Path(tmp) / "absent-root" / "nm-dns-restore" / "snapshot.json"), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=missing
             ), patch("dns.networkmanager_restore.subprocess.run") as run:
                 with self.assertRaisesRegex(NetworkManagerRestoreError, "absent"):
@@ -241,7 +242,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text("not valid json", encoding="utf-8")
-            with patch.object(nm_restore, "root_snapshot_exists", return_value=False), patch.object(
+            with patch.object(nm_restore, "root_snapshot_path", return_value=Path(tmp) / "absent-root" / "nm-dns-restore" / "snapshot.json"), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
             ), patch.object(nm_restore, "_legacy_snapshot_is_trusted", return_value=True), patch(
                 "dns.networkmanager_restore.subprocess.run"
@@ -257,7 +258,7 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text(json.dumps(payload), encoding="utf-8")
-            with patch.object(nm_restore, "root_snapshot_exists", return_value=False), patch.object(
+            with patch.object(nm_restore, "root_snapshot_path", return_value=Path(tmp) / "absent-root" / "nm-dns-restore" / "snapshot.json"), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
             ), patch.object(nm_restore, "_legacy_snapshot_is_trusted", return_value=True), patch(
                 "dns.networkmanager_restore.subprocess.run"
@@ -266,6 +267,49 @@ class NetworkManagerRestoreTests(unittest.TestCase):
                     restore_root_snapshot()
 
         run.assert_not_called()
+
+    def test_restore_fails_closed_when_root_directory_is_a_symlink(self) -> None:
+        # F-S2-02: an unsafe root state directory must not be collapsed into
+        # "absent". Even with a valid legacy snapshot available, restore raises
+        # and never runs nmcli against the sentinel target.
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "watchdogvpn"
+            parent.mkdir(mode=0o700)
+            sentinel = Path(tmp) / "dns-sentinel"
+            sentinel.mkdir(mode=0o700)
+            (sentinel / "marker").write_text("untouched\n", encoding="ascii")
+
+            def meta() -> tuple:
+                info = sentinel.lstat()
+                return (info.st_mode & 0o777, info.st_uid, info.st_gid, info.st_mtime_ns)
+
+            before = meta()
+            (parent / "nm-dns-restore").symlink_to(sentinel, target_is_directory=True)
+            root = parent / "nm-dns-restore" / "snapshot.json"
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            with patch.object(nm_restore, "root_snapshot_path", return_value=root), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(nm_restore, "_legacy_snapshot_is_trusted", return_value=True), patch(
+                "dns.networkmanager_restore.subprocess.run"
+            ) as run:
+                with self.assertRaisesRegex(NetworkManagerRestoreError, "unsafe"):
+                    restore_root_snapshot()
+            run.assert_not_called()
+            self.assertEqual(meta(), before)
+
+    def test_root_snapshot_exists_remains_a_best_effort_probe(self) -> None:
+        # The unprivileged daemon's boolean probe must not raise on an unsafe
+        # directory (it also cannot traverse a root-only 0700 directory).
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "watchdogvpn"
+            parent.mkdir(mode=0o700)
+            sentinel = Path(tmp) / "dns-sentinel"
+            sentinel.mkdir(mode=0o700)
+            (parent / "nm-dns-restore").symlink_to(sentinel, target_is_directory=True)
+            root = parent / "nm-dns-restore" / "snapshot.json"
+            with patch.object(nm_restore, "root_snapshot_path", return_value=root):
+                self.assertFalse(root_snapshot_exists())
 
     def test_migrate_promotes_trusted_legacy_snapshot_into_root_authority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

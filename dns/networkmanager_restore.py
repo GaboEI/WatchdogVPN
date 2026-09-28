@@ -167,30 +167,35 @@ def restore_root_snapshot() -> bool:
     actionable error without mutating DNS.
     """
     path = root_snapshot_path()
-    if root_snapshot_exists():
-        payload = _load_validated_snapshot(path)
-        _restore_connections(payload["connections"])
-        _unlink_snapshot(path)
-        return True
+    directory_fd: int | None = None
+    try:
+        directory_fd = _open_root_snapshot_directory(create=False)
+    except FileNotFoundError:
+        # No root state directory at all: the legacy fallback is the only
+        # authority. An unsafe directory raises instead, below.
+        directory_fd = None
+    if directory_fd is not None:
+        try:
+            if _snapshot_present(directory_fd, path.name):
+                payload = _read_snapshot_from(directory_fd, path)
+                _restore_connections(payload["connections"])
+                _unlink_snapshot_from(directory_fd, path.name)
+                return True
+        finally:
+            os.close(directory_fd)
     connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=True)
     _restore_connections(connections)
     return True
 
 
-def _unlink_snapshot(path: Path) -> None:
+def _unlink_snapshot_from(directory_fd: int, name: str) -> None:
     try:
-        directory_fd = _open_root_snapshot_directory(create=False)
-    except FileNotFoundError:
-        return
-    try:
-        os.unlink(path.name, dir_fd=directory_fd)
+        os.unlink(name, dir_fd=directory_fd)
         os.fsync(directory_fd)
     except FileNotFoundError:
         return
     except OSError as exc:
         raise NetworkManagerRestoreError("cannot remove NetworkManager DNS restore snapshot") from exc
-    finally:
-        os.close(directory_fd)
 
 
 def migrate_legacy_snapshot() -> bool:
@@ -305,18 +310,25 @@ def _load_validated_snapshot(path: Path) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise NetworkManagerRestoreError("NetworkManager DNS restore snapshot is absent") from exc
     try:
+        return _read_snapshot_from(directory_fd, path)
+    finally:
+        os.close(directory_fd)
+
+
+def _read_snapshot_from(directory_fd: int, path: Path) -> dict[str, Any]:
+    try:
         descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
-        try:
-            metadata = os.fstat(descriptor)
-            _validate_metadata(metadata, path, 0o600)
-            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
-                payload = json.load(handle)
-        finally:
-            os.close(descriptor)
+    except OSError as exc:
+        raise NetworkManagerRestoreError("invalid NetworkManager DNS restore snapshot") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        _validate_metadata(metadata, path, 0o600)
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+            payload = json.load(handle)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise NetworkManagerRestoreError("invalid NetworkManager DNS restore snapshot") from exc
     finally:
-        os.close(directory_fd)
+        os.close(descriptor)
     _validate_snapshot(payload)
     return payload
 
