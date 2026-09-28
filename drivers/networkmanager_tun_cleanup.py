@@ -115,7 +115,7 @@ def migrate_legacy_owned_uuid_registry() -> bool:
     if _owned_uuid_registry_present():
         return False
     try:
-        legacy_uuid = _read_registry_uuid(LEGACY_OWNED_UUIDS_PATH)
+        legacy_uuid = _read_legacy_owned_uuid_registry()
     except NetworkManagerTunCleanupError:
         return False
     if legacy_uuid is None:
@@ -207,7 +207,13 @@ def _read_owned_uuid_registry() -> str | None:
     return _read_registry_uuid(OWNED_UUIDS_PATH)
 
 
-def _read_registry_uuid(registry_path: Path) -> str | None:
+def _read_legacy_owned_uuid_registry() -> str | None:
+    # The legacy source must be the exact historical payload, not merely a
+    # string that a permissive strip() would normalise into a UUID.
+    return _read_registry_uuid(LEGACY_OWNED_UUIDS_PATH, canonical=True)
+
+
+def _read_registry_uuid(registry_path: Path, *, canonical: bool = False) -> str | None:
     parent_fd: int | None = None
     file_fd: int | None = None
     try:
@@ -234,7 +240,8 @@ def _read_registry_uuid(registry_path: Path) -> str | None:
             chunks.append(chunk)
             if sum(len(part) for part in chunks) > 128:
                 raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
-        value = b"".join(chunks).decode("ascii").strip()
+        raw = b"".join(chunks)
+        value = _decode_canonical_registry_payload(raw) if canonical else raw.decode("ascii").strip()
     except UnicodeDecodeError as exc:
         raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry") from exc
     except OSError as exc:
@@ -245,6 +252,22 @@ def _read_registry_uuid(registry_path: Path) -> str | None:
         if parent_fd is not None:
             os.close(parent_fd)
     if not _is_uuid(value):
+        raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
+    return value
+
+
+def _decode_canonical_registry_payload(raw: bytes) -> str:
+    # The historical legacy registry is exactly one canonical lowercase UUID
+    # followed by a single newline (the pre-move helper wrote f"{uuid}\n").
+    # Anything else -- leading/trailing whitespace or tabs, extra blank lines, a
+    # missing newline, duplicate lines, uppercase or non-ASCII bytes, or an
+    # overlong payload -- is not the trusted historical format and must never be
+    # promoted to root authority.
+    text = raw.decode("ascii")
+    if not text.endswith("\n") or text.count("\n") != 1:
+        raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
+    value = text[:-1]
+    if not _is_uuid(value) or value != str(UUID(value)):
         raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
     return value
 
