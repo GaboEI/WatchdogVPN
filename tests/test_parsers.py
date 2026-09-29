@@ -555,7 +555,8 @@ class SubscriptionParserTests(unittest.TestCase):
     @patch("parsers.subscription._fetch")
     def test_fetch_returns_best_valid_candidate_across_user_agents(self, fetch_mock) -> None:
         # T-PR23-01: among several valid candidates the best one (most
-        # profiles) is returned, with a stable tie-break on first-seen order.
+        # profiles) is returned; ties fall back to fewer rejected profiles and
+        # then to first-seen order (S-04).
         small = base64.b64encode(
             b"vless://uuid@one.example.com:443?encryption=none"
         ).decode("ascii")
@@ -596,6 +597,122 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertIn("invalid subscription URL", message)
         self.assertNotIn("private-token-value", message)
         self.assertNotIn("https://example.com", message)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_prefers_cleaner_candidate_when_accepted_counts_tie(self, fetch_mock) -> None:
+        # S-04: on an accepted-profile tie the candidate with fewer rejected
+        # profiles wins, so a cleaner complete response is not discarded.
+        cleaner = base64.b64encode(
+            b"vless://uuid@clean.example.com:443?encryption=none\n"
+            b"vless://uuid2@clean.example.com:8443?encryption=none"
+        ).decode("ascii")
+        dirty = base64.b64encode(
+            b"vless://uuid@clean.example.com:443?encryption=none\n"
+            b"vless://uuid2@clean.example.com:8443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return dirty, {}
+            if user_agent == "Karing":
+                return cleaner, {"subscription-userinfo": "upload=1; download=2; total=3"}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 0)
+        self.assertEqual(
+            sorted(profile.config["host"] for profile in result.profiles),
+            ["clean.example.com", "clean.example.com"],
+        )
+        self.assertEqual(fetch_mock.call_count, 5)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_keeps_accepted_count_priority_over_fewer_rejections(self, fetch_mock) -> None:
+        # S-04 boundary: a candidate with MORE accepted profiles still wins even
+        # when the smaller candidate rejects nothing.
+        fewer_clean = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none"
+        ).decode("ascii")
+        more_dirty = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return more_dirty, {}
+            if user_agent == "Karing":
+                return fewer_clean, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_exact_tie_preserves_first_candidate_order(self, fetch_mock) -> None:
+        # S-04 boundary: when accepted AND rejected counts are equal the
+        # established first-seen candidate order is preserved.
+        first = base64.b64encode(
+            b"vless://uuid@first.example.com:443?encryption=none"
+        ).decode("ascii")
+        second = base64.b64encode(
+            b"vless://uuid@second.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return first, {}
+            if user_agent == "Karing":
+                return second, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(result.profiles[0].config["host"], "first.example.com")
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_tie_break_ignores_rejected_and_failed_candidates(self, fetch_mock) -> None:
+        # S-04: malformed or failed responses can never become winners, so the
+        # cleaner tied candidate is selected even when every other User-Agent
+        # fails or returns nothing usable.
+        clean = base64.b64encode(
+            b"vless://uuid@only.example.com:443?encryption=none"
+        ).decode("ascii")
+        all_rejected = base64.b64encode(b"not-a-supported-uri").decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return all_rejected, {}
+            if user_agent == "Karing":
+                return clean, {}
+            raise ParseError("subscription fetch timed out")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.rejected_profiles, 0)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:

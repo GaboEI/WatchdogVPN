@@ -313,6 +313,18 @@ def _redact_subscription_error(message: str, url: str) -> str:
     return _SUBSCRIPTION_URL_TOKEN_RE.sub("<redacted>", redacted)
 
 
+def _candidate_rank(candidate: SubscriptionFetchResult) -> tuple[int, int]:
+    """Rank a retrieved candidate for selection.
+
+    More accepted profiles always wins. When accepted counts tie, fewer
+    rejected profiles wins, because a cleaner complete candidate is the one
+    that can safely replace the provider's last known-good state (T-PR23-04).
+    The caller only replaces the current best on a strictly greater rank, so an
+    exact tie preserves the established first-seen candidate order.
+    """
+    return (len(candidate.profiles), -candidate.rejected_profiles)
+
+
 def fetch_subscription(url: str) -> SubscriptionFetchResult:
     errors: list[str] = []
     candidates: list[SubscriptionFetchResult] = []
@@ -345,7 +357,7 @@ def fetch_subscription(url: str) -> SubscriptionFetchResult:
     if candidates:
         best = candidates[0]
         for candidate in candidates[1:]:
-            if len(candidate.profiles) > len(best.profiles):
+            if _candidate_rank(candidate) > _candidate_rank(best):
                 best = candidate
         return best
     detail = f": {errors[-1]}" if errors else ""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,7 @@ from config.provider_store import DuplicateProviderError, ProviderLimitError, Pr
 from models.profile import Profile, ProfileSource, ProtocolType
 from models.provider import Provider
 from parsers import ParseError
-from parsers.subscription import SubscriptionFetchResult
+from parsers.subscription import DEFAULT_SUBSCRIPTION_USER_AGENT, SubscriptionFetchResult
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 
 
@@ -285,6 +286,106 @@ class SubscriptionProviderTests(unittest.TestCase):
                 provider_before = provider_path.read_bytes()
                 profile_before = profile_path.read_bytes()
 
+                with self.assertRaisesRegex(ParseError, "incomplete profile set"):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+            names = {profile.name for profile in ProfileStore(profile_path).list()}
+            self.assertEqual(names, {"One", "Two"})
+
+    def test_update_uses_cleaner_tied_candidate_and_succeeds(self) -> None:
+        # S-04 end-to-end: patched only at the network boundary, so the real
+        # parsers.fetch_subscription tie-break runs. The provider must select
+        # the cleaner complete candidate and perform the supported update
+        # instead of rejecting an incomplete first-seen candidate.
+        def uri(host: str) -> bytes:
+            return f"vless://test-uuid@{host}:443?encryption=none".encode("utf-8")
+
+        def encoded(*lines: bytes) -> str:
+            return base64.b64encode(b"\n".join(lines)).decode("ascii")
+
+        last_known_good = SubscriptionFetchResult(
+            profiles=[
+                _profile("one", "One", "one.example.com"),
+                _profile("two", "Two", "two.example.com"),
+            ]
+        )
+        dirty = encoded(uri("one.example.com"), uri("two.example.com"), b"not-a-supported-uri")
+        clean = encoded(uri("one.example.com"), uri("three.example.com"))
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return dirty, {}
+            if user_agent == "Karing":
+                return clean, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            with patch(
+                "providers.subscription_provider.fetch_subscription", side_effect=[last_known_good]
+            ):
+                stored = provider.add("https://provider.example/sub", "Provider")
+
+            with patch("parsers.subscription._fetch", side_effect=fetch_response):
+                changes = provider.update(stored.id)
+
+            self.assertGreater(changes, 0)
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            self.assertEqual(
+                {profile.name for profile in profiles}, {"one.example.com", "three.example.com"}
+            )
+            self.assertEqual(
+                {profile.id for profile in profiles},
+                {"provider:one.example.com", "provider:three.example.com"},
+            )
+
+    def test_update_keeps_byte_exact_state_when_only_dirty_candidates_exist(self) -> None:
+        # S-04 boundary: without a cleaner tied candidate the provider still
+        # refuses the incomplete set and preserves last-known-good provider and
+        # profile state byte-for-byte.
+        last_known_good = SubscriptionFetchResult(
+            profiles=[
+                _profile("one", "One", "one.example.com"),
+                _profile("two", "Two", "two.example.com"),
+            ]
+        )
+
+        def uri(host: str) -> bytes:
+            return f"vless://test-uuid@{host}:443?encryption=none".encode("utf-8")
+
+        def encoded(*lines: bytes) -> str:
+            return base64.b64encode(b"\n".join(lines)).decode("ascii")
+
+        dirtier = encoded(uri("one.example.com"), b"not-a-supported-uri", b"also-not-supported")
+        dirty = encoded(uri("one.example.com"), uri("three.example.com"), b"not-a-supported-uri")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return dirty, {}
+            if user_agent == "Karing":
+                return dirtier, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            with patch(
+                "providers.subscription_provider.fetch_subscription", side_effect=[last_known_good]
+            ):
+                stored = provider.add("https://provider.example/sub", "Provider")
+            provider_before = provider_path.read_bytes()
+            profile_before = profile_path.read_bytes()
+
+            with patch("parsers.subscription._fetch", side_effect=fetch_response):
                 with self.assertRaisesRegex(ParseError, "incomplete profile set"):
                     provider.update(stored.id)
 
