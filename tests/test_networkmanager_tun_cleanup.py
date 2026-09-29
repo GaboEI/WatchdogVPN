@@ -711,6 +711,56 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
             )
             self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
 
+    def test_publication_fails_closed_when_the_directory_is_replaced(self) -> None:
+        # PR25-F5: after publication the required pathname must still resolve to
+        # the validated registry. Replacing the directory during publication
+        # means the authority is not durable there, so registration fails closed
+        # instead of reporting success.
+        legacy_path = self._write_legacy_registry(f"{UUID_ONE}\n")
+        moved_dir = self.registry_dir.with_name("root-owned-registry.moved")
+        real_link = os.link
+
+        def link_then_replace_directory(source, target, *args, **kwargs):
+            result = real_link(source, target, *args, **kwargs)
+            self.registry_dir.rename(moved_dir)
+            self.registry_dir.mkdir(mode=0o700)
+            self.registry_dir.chmod(0o700)
+            return result
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch(
+            "drivers.networkmanager_tun_cleanup.os.link", side_effect=link_then_replace_directory
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                migrate_legacy_owned_uuid_registry()
+
+        # The publication really happened (in the replaced directory) but it is
+        # not reachable at the required pathname, and no success was reported.
+        self.assertTrue((moved_dir / self.registry_path.name).exists())
+        self.assertFalse(self.registry_path.exists())
+
+    def test_publication_fails_closed_when_a_live_registration_entry_is_replaced(self) -> None:
+        # PR25-F5: the live-registration path has the same postcondition; an
+        # entry replaced by a different validated registry is not reported as a
+        # successful registration of the UUID that was written.
+        real_rename = os.rename
+
+        def rename_then_replace_entry(source, target, *args, **kwargs):
+            result = real_rename(source, target, *args, **kwargs)
+            replacement = self.registry_dir / "replacement.tmp"
+            replacement.write_text(f"{UUID_TWO}\n", encoding="ascii")
+            replacement.chmod(0o600)
+            os.replace(replacement, self.registry_path)
+            return result
+
+        self.registry_dir.mkdir(mode=0o700)
+        with self._patched_registry(), patch(
+            "drivers.networkmanager_tun_cleanup.os.rename", side_effect=rename_then_replace_entry
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                nm_tun_cleanup._write_owned_uuid_registry(UUID_ONE, replace=True)
+
     def test_migrated_authority_never_removes_foreign_same_name_profile(self) -> None:
         # Requirement 6: only the migrated UUID authorises a deletion; a foreign
         # profile that merely shares the fixed name is never removed.

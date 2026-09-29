@@ -106,9 +106,9 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectory=watchdogvpn' "state d
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectoryMode=2770' "state directory preparation must be group-writable and setgid"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'repair_watchdogvpn_shared_state_permissions' "runtime install must normalize shared state permissions after migration"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_watchdogvpn_private_state' "runtime install must provision service-only private state after shared-state repair"
-assert_contains "$ROOT_DIR/lib/runtime.sh" '\( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o' "shared state repair must prune private and privileged DNS/TUN state from widening"
-assert_contains "$ROOT_DIR/lib/runtime.sh" '-type d -exec chmod 2770 {} +' "shared state directories must retain watchdogvpn group inheritance"
-assert_contains "$ROOT_DIR/lib/runtime.sh" '-type f -exec chmod 0660 {} +' "shared state files must remain group-writable"
+assert_contains "$ROOT_DIR/privileged_state.py" 'SHARED_STATE_PRUNE_NAMES = ("private", "nm-dns-restore", "nm-tun")' "shared state repair must prune private and privileged DNS/TUN state from widening"
+assert_contains "$ROOT_DIR/privileged_state.py" 'SHARED_STATE_DIRECTORY_MODE = 0o2770' "shared state directories must retain watchdogvpn group inheritance"
+assert_contains "$ROOT_DIR/privileged_state.py" 'SHARED_STATE_FILE_MODE = 0o660' "shared state files must remain group-writable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install -d -m 0700 -o watchdogvpn -g watchdogvpn "$private_dir"' "private state must be service-only"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod 0700 "$private_dir"' "private state must enforce service-only rwx permissions"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod g-s "$private_dir"' "private state must explicitly clear the setgid bit inherited from shared state"
@@ -138,9 +138,10 @@ assert_contains "$ROOT_DIR/privileged_state.py" 'os.fchown' "privileged state gu
 assert_contains "$ROOT_DIR/privileged_state.py" 'os.fchmod' "privileged state guard must apply mode through a descriptor"
 assert_contains "$ROOT_DIR/privileged_state.py" 'follow_symlinks=False' "privileged state guard must lstat entries without following symlinks"
 assert_contains "$ROOT_DIR/privileged_state.py" 'os.fstat' "privileged state guard must validate descriptors with fstat"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'local dns_restore_dir="$target_dir/nm-dns-restore"' "shared-state permission repair must know the privileged DNS state directory"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'local tun_dir="$target_dir/nm-tun"' "shared-state permission repair must know the privileged TUN state directory"
-assert_contains "$ROOT_DIR/lib/runtime.sh" '-path "$dns_restore_dir" -o -path "$tun_dir"' "shared-state permission repair must prune the privileged DNS/TUN state directories"
+assert_contains "$ROOT_DIR/privileged_state.py" '"private", "nm-dns-restore"' "shared-state permission repair must know the privileged private state directory"
+assert_contains "$ROOT_DIR/privileged_state.py" 'SHARED_STATE_PRUNE_NAMES' "shared-state permission repair must know the privileged DNS state directory"
+assert_contains "$ROOT_DIR/privileged_state.py" '"nm-tun"' "shared-state permission repair must know the privileged TUN state directory"
+assert_contains "$ROOT_DIR/privileged_state.py" 'if top and name in SHARED_STATE_PRUNE_NAMES:' "shared-state permission repair must prune the privileged state directories at the top level"
 assert_not_contains "$ROOT_DIR/lib/runtime.sh" 'chown -R watchdogvpn:watchdogvpn "$target_dir"' "shared-state permission repair must not recursively widen the shared tree into the privileged state"
 assert_contains "$ROOT_DIR/dns/networkmanager_restore.py" 'privileged_state.open_state_directory' "DNS restore state must be created/validated by the shared no-follow primitive"
 assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'privileged_state.open_state_directory' "TUN registry directory must be created/validated by the shared no-follow primitive"
@@ -314,25 +315,22 @@ for script in install.sh update.sh doctor.sh; do
 done
 assert_contains "$ROOT_DIR/uninstall.sh" 'watchdogvpn.desktop' "uninstall must still clean up a desktop launcher file left by a pre-removal install"
 
-# PR25-F1: the shared-state permission repair runs over the group-writable
-# /var/lib/watchdogvpn, so no ownership or mode pass may hand a symlink to
-# chown/chmod (both follow a link given by name and would change whatever it
-# points at outside the tree). Skipped links must be reported instead.
+# PR25-F4: the shared-state permission repair runs over the group-writable
+# /var/lib/watchdogvpn, so it must not classify an entry by pathname and then
+# change it by pathname: a group member could swap it for a symlink and have the
+# change land outside the tree. The repair delegates to the descriptor-relative,
+# no-follow primitive instead of pathname chown/chmod.
 repair_body="$(awk '/^repair_watchdogvpn_shared_state_permissions\(\) \{/{seen=1} seen{print} seen && /^\}$/{exit}' "$ROOT_DIR/lib/runtime.sh")"
 if ! grep -Fq -- 'repair_watchdogvpn_shared_state_permissions()' <<<"$repair_body"; then
   printf 'FAIL: could not read the shared-state permission repair body\n' >&2
   exit 1
 fi
-if grep -n -- '-exec chown\|-exec chmod' <<<"$repair_body" | grep -v -- '-type l' >/dev/null; then
-  printf 'FAIL: a shared-state repair pass can hand a symlink to chown/chmod\n' >&2
+if ! grep -Fq -- 'repair-shared' <<<"$repair_body"; then
+  printf 'FAIL: shared-state repair must use the descriptor-relative no-follow guard\n' >&2
   exit 1
 fi
-if ! grep -Fq -- '-type l -print -quit' <<<"$repair_body"; then
-  printf 'FAIL: shared-state repair must detect symlink entries\n' >&2
-  exit 1
-fi
-if ! grep -Fq -- 'their targets were left untouched' <<<"$repair_body"; then
-  printf 'FAIL: shared-state repair must report symlink entries it refused to follow\n' >&2
+if grep -n -- '-exec chown\|-exec chmod\|chown watchdogvpn\|chmod 2770\|chmod 0660' <<<"$repair_body" >/dev/null; then
+  printf 'FAIL: shared-state repair must not change ownership or mode by pathname\n' >&2
   exit 1
 fi
 

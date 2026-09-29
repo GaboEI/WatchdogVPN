@@ -158,17 +158,45 @@ def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
 
 
 def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
+    profiles, _skipped_nodes = parse_singbox_json_detailed(data)
+    return profiles
+
+
+# Outbound types that describe sing-box's own control flow rather than a remote
+# proxy node. They are expected in a complete configuration and are therefore
+# never counted as an unimportable node.
+_SINGBOX_CONTROL_TYPES = frozenset({"direct", "block", "dns", "selector", "urltest"})
+
+
+def _looks_like_node(outbound: dict[str, Any]) -> bool:
+    """True when an outbound describes a remote node we could not import."""
+    return any(key in outbound for key in ("server", "server_port", "settings"))
+
+
+def parse_singbox_json_detailed(data: str | dict[str, Any]) -> tuple[list[Profile], int]:
+    """Parse sing-box JSON and report nodes that could not be imported.
+
+    An outbound that is neither a supported protocol nor one of sing-box's
+    control-flow entries but still carries a connection target is an
+    unimportable node: it is counted so a structured candidate is never treated
+    as a complete, clean response while entries were silently skipped.
+    """
     payload = _load_json(data)
     profiles: list[Profile] = []
+    skipped_nodes = 0
     for outbound in _coerce_outbounds(payload):
         profile = _build_profile(outbound) or _build_v2ray_profile(outbound)
-        if profile is not None:
-            try:
-                validate_profile_endpoint(profile)
-                validate_profile_semantics(profile)
-            except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
-                raise ParseError(str(exc)) from exc
-            profiles.append(profile)
+        if profile is None:
+            outbound_type = str(outbound.get("type", "") or outbound.get("protocol", "")).lower()
+            if outbound_type not in _SINGBOX_CONTROL_TYPES and _looks_like_node(outbound):
+                skipped_nodes += 1
+            continue
+        try:
+            validate_profile_endpoint(profile)
+            validate_profile_semantics(profile)
+        except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
+            raise ParseError(str(exc)) from exc
+        profiles.append(profile)
     if not profiles:
         raise ParseError("sing-box JSON contains no supported profiles")
-    return profiles
+    return profiles, skipped_nodes

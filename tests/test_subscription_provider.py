@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -393,6 +394,99 @@ class SubscriptionProviderTests(unittest.TestCase):
             self.assertEqual(profile_path.read_bytes(), profile_before)
             names = {profile.name for profile in ProfileStore(profile_path).list()}
             self.assertEqual(names, {"One", "Two"})
+
+    def test_incomplete_structured_candidate_cannot_replace_last_known_good(self) -> None:
+        # PR25-F6: a structured response that silently skips a node must not
+        # replace the last known-good provider state, even when it wins on
+        # accepted-profile count.
+        last_known_good = SubscriptionFetchResult(
+            profiles=[
+                _profile("one", "One", "one.example.com"),
+                _profile("two", "Two", "two.example.com"),
+            ]
+        )
+        structured_with_skipped_node = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "vless", "tag": "c", "server": "three.example.com", "server_port": 443, "uuid": "u3"},
+                    {"type": "ssr", "tag": "d", "server": "four.example.com", "server_port": 443, "password": "p"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return structured_with_skipped_node, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            with patch(
+                "providers.subscription_provider.fetch_subscription", side_effect=[last_known_good]
+            ):
+                stored = provider.add("https://provider.example/sub", "Provider")
+            provider_before = provider_path.read_bytes()
+            profile_before = profile_path.read_bytes()
+
+            with patch("parsers.subscription._fetch", side_effect=fetch_response):
+                with self.assertRaisesRegex(ParseError, "incomplete profile set"):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+            names = {profile.name for profile in ProfileStore(profile_path).list()}
+            self.assertEqual(names, {"One", "Two"})
+
+    def test_complete_structured_candidate_updates_successfully(self) -> None:
+        # PR25-F6 boundary: a structured response with no skipped nodes remains a
+        # valid complete replacement.
+        last_known_good = SubscriptionFetchResult(
+            profiles=[
+                _profile("one", "One", "one.example.com"),
+                _profile("two", "Two", "two.example.com"),
+            ]
+        )
+        complete_structured = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "four.example.com", "server_port": 443, "uuid": "u4"},
+                    {"type": "direct", "tag": "direct"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return complete_structured, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            with patch(
+                "providers.subscription_provider.fetch_subscription", side_effect=[last_known_good]
+            ):
+                stored = provider.add("https://provider.example/sub", "Provider")
+
+            with patch("parsers.subscription._fetch", side_effect=fetch_response):
+                changes = provider.update(stored.id)
+
+            self.assertGreater(changes, 0)
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            self.assertEqual(
+                {profile.config.get("server") for profile in profiles},
+                {"one.example.com", "four.example.com"},
+            )
 
     def test_update_partial_refresh_preserves_manual_and_other_provider_profiles(self) -> None:
         results = [

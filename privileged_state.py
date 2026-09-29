@@ -18,6 +18,8 @@ helper for ``/var/lib/watchdogvpn/nm-dns-restore`` and ``/var/lib/watchdogvpn/nm
 from __future__ import annotations
 
 import os
+import pwd
+import grp
 import stat
 import sys
 from pathlib import Path
@@ -29,6 +31,14 @@ EXPECTED_STATE_UID = 0
 EXPECTED_STATE_GID = 0
 EXPECTED_DIRECTORY_MODE = 0o700
 EXPECTED_FILE_MODE = 0o600
+
+# The shared portion of the state tree is group-shared browsing state owned by
+# the service account, with the privileged subtrees pruned instead of widened.
+SHARED_STATE_OWNER = "watchdogvpn"
+SHARED_STATE_GROUP = "watchdogvpn"
+SHARED_STATE_DIRECTORY_MODE = 0o2770
+SHARED_STATE_FILE_MODE = 0o660
+SHARED_STATE_PRUNE_NAMES = ("private", "nm-dns-restore", "nm-tun")
 
 
 class PrivilegedStateError(RuntimeError):
@@ -109,6 +119,118 @@ def confirm_state_directory_identity(directory: Path, directory_fd: int) -> None
         _confirm_inode(parent_fd, directory.name, directory_fd)
     finally:
         os.close(parent_fd)
+
+
+def repair_shared_state_permissions(directory: Path) -> tuple[str, ...]:
+    """Widen the shared watch state tree without ever following a symlink.
+
+    ``/var/lib/watchdogvpn`` is group-writable, so a member of the
+    ``watchdogvpn`` group can plant an entry there, and a pathname-based
+    ``chown``/``chmod`` would follow an entry swapped for a symlink and change
+    whatever it points at outside the tree.
+
+    Every ownership and mode change therefore goes through a descriptor opened
+    ``O_NOFOLLOW`` relative to its already-open parent, and the opened inode is
+    re-confirmed against the classified entry before the change, so a swap
+    between classification and the operation is skipped instead of redirecting
+    it. The ``private``, ``nm-dns-restore`` and ``nm-tun`` subtrees are pruned,
+    not widened. Returns the display paths that were left untouched.
+    """
+    try:
+        root_stat = os.lstat(directory)
+    except OSError as exc:
+        raise PrivilegedStateError("cannot inspect the shared state directory: %s" % directory) from exc
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise PrivilegedStateError("shared state path is not a directory: %s" % directory)
+    try:
+        uid = pwd.getpwnam(SHARED_STATE_OWNER).pw_uid
+        gid = grp.getgrnam(SHARED_STATE_GROUP).gr_gid
+    except KeyError as exc:
+        raise PrivilegedStateError(
+            "the WatchdogVPN system account and group must exist before shared state is repaired"
+        ) from exc
+    skipped: list[str] = []
+    _repair_shared_directory(directory, uid, gid, top=True, skipped=skipped)
+    return tuple(skipped)
+
+
+def _repair_shared_directory(directory: Path, uid: int, gid: int, *, top: bool, skipped: list[str]) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        directory_fd = os.open(directory, flags)
+    except OSError:
+        skipped.append(str(directory))
+        return
+    try:
+        metadata = os.fstat(directory_fd)
+        if not stat.S_ISDIR(metadata.st_mode):
+            skipped.append(str(directory))
+            return
+        _apply_shared_metadata(directory_fd, uid, gid, SHARED_STATE_DIRECTORY_MODE)
+        for name in sorted(os.listdir(directory_fd)):
+            if top and name in SHARED_STATE_PRUNE_NAMES:
+                continue
+            _repair_shared_entry(directory_fd, name, "%s/%s" % (directory, name), uid, gid, skipped)
+    finally:
+        os.close(directory_fd)
+
+
+def _repair_shared_entry(
+    parent_fd: int,
+    name: str,
+    display: str,
+    uid: int,
+    gid: int,
+    skipped: list[str],
+) -> None:
+    try:
+        entry_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        skipped.append(display)
+        return
+    if stat.S_ISLNK(entry_stat.st_mode):
+        # Never followed: a link placed in this group-writable tree must not
+        # redirect an ownership or mode change to a target outside it.
+        skipped.append(display)
+        return
+    if stat.S_ISDIR(entry_stat.st_mode):
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        mode = SHARED_STATE_DIRECTORY_MODE
+    elif stat.S_ISREG(entry_stat.st_mode):
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        mode = SHARED_STATE_FILE_MODE
+    else:
+        skipped.append(display)
+        return
+    try:
+        entry_fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError:
+        # Swapped for a symlink (or removed) between classification and the
+        # operation: nothing is changed through this entry.
+        skipped.append(display)
+        return
+    try:
+        opened_stat = os.fstat(entry_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (entry_stat.st_dev, entry_stat.st_ino):
+            skipped.append(display)
+            return
+        if not (stat.S_ISDIR(opened_stat.st_mode) or stat.S_ISREG(opened_stat.st_mode)):
+            skipped.append(display)
+            return
+        _apply_shared_metadata(entry_fd, uid, gid, mode)
+        if stat.S_ISDIR(opened_stat.st_mode):
+            for child in sorted(os.listdir(entry_fd)):
+                _repair_shared_entry(entry_fd, child, "%s/%s" % (display, child), uid, gid, skipped)
+    finally:
+        os.close(entry_fd)
+
+
+def _apply_shared_metadata(fd: int, uid: int, gid: int, mode: int) -> None:
+    try:
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+    except OSError as exc:
+        raise PrivilegedStateError("cannot repair shared state ownership or mode") from exc
 
 
 def _open_parent_directory(directory: Path, *, create: bool) -> int:
@@ -224,8 +346,25 @@ def main(argv: list[str] | None = None) -> int:
         directory, state_file = args[1], None
     elif len(args) == 3 and args[0] == "prepare":
         directory, state_file = args[1], args[2]
+    elif len(args) == 2 and args[0] == "repair-shared":
+        try:
+            skipped = repair_shared_state_permissions(Path(args[1]))
+        except PrivilegedStateError as exc:
+            print("watchdogvpn-state-guard: %s" % exc, file=sys.stderr)
+            return 1
+        for entry in skipped:
+            print(
+                "[WARN] watchdogvpn-state-guard: shared state entry left untouched (not a regular entry to widen): %s"
+                % entry,
+                file=sys.stderr,
+            )
+        return 0
     else:
-        print("usage: watchdogvpn-state-guard prepare <directory> [state-file]", file=sys.stderr)
+        print(
+            "usage: watchdogvpn-state-guard prepare <directory> [state-file]\n"
+            "       watchdogvpn-state-guard repair-shared <directory>",
+            file=sys.stderr,
+        )
         return 2
     try:
         prepare_state_directory(Path(directory), state_file)

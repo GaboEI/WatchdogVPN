@@ -222,7 +222,16 @@ def _write_owned_uuid_registry(connection_uuid: str, *, replace: bool = True) ->
             tmp_name = None
             published = True
         os.fsync(parent_fd)
-        _read_owned_uuid_registry()
+        # Postcondition: the required durable pathname must still resolve to the
+        # validated registry holding exactly the UUID just published. A directory
+        # (or entry) renamed or replaced during publication means the authority
+        # is not durable at the required path, so registration fails closed
+        # instead of being reported as a success.
+        durable = _read_owned_uuid_registry()
+        if durable != connection_uuid:
+            raise NetworkManagerTunCleanupError(
+                "the WatchdogVPN NetworkManager TUN ownership registry is not durable at the required path"
+            )
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot record WatchdogVPN NetworkManager TUN ownership") from exc
     finally:

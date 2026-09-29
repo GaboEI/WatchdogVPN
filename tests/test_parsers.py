@@ -21,6 +21,10 @@ from parsers import (
     parse_uri,
     parse_wg_config,
 )
+from parsers.clash_yaml import parse_clash_yaml_detailed
+from parsers.singbox_json import parse_singbox_json_detailed
+
+
 from parsers.subscription import (
     DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_SUBSCRIPTION_USER_AGENT,
@@ -716,6 +720,102 @@ class SubscriptionParserTests(unittest.TestCase):
 
         self.assertEqual(result.user_agent, "Karing")
         self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.rejected_profiles, 0)
+
+    @patch("parsers.subscription._fetch")
+    def test_structured_candidates_report_unimportable_nodes(self, fetch_mock) -> None:
+        # PR25-F6: a structured candidate must not look complete while nodes were
+        # silently skipped. sing-box control-flow entries are not nodes and are
+        # therefore not counted.
+        payload = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "b.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "ssr", "tag": "c", "server": "c.example.com", "server_port": 443, "password": "p"},
+                    {"type": "direct", "tag": "direct"},
+                ]
+            }
+        )
+        profiles, skipped_nodes = parse_singbox_json_detailed(payload)
+        self.assertEqual(len(profiles), 2)
+        self.assertEqual(skipped_nodes, 1)
+
+        clash = "proxies:\n  - name: a\n    type: vless\n    server: a.example.com\n    port: 443\n    uuid: u1\n  - name: b\n    type: ssr\n    server: b.example.com\n    port: 443\n"
+        clash_profiles, clash_skipped = parse_clash_yaml_detailed(clash)
+        self.assertEqual(len(clash_profiles), 1)
+        self.assertEqual(clash_skipped, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_incomplete_structured_candidate_is_not_ranked_as_cleaner(self, fetch_mock) -> None:
+        # PR25-F6: base64 candidate (2 accepted, 1 rejected) versus a structured
+        # candidate with the same accepted count and one unimportable node. The
+        # structured response must not win the tie as the "cleaner" candidate.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "ssr", "tag": "c", "server": "three.example.com", "server_port": 443, "password": "p"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_complete_structured_candidate_still_wins_when_genuinely_cleaner(self, fetch_mock) -> None:
+        # PR25-F6 boundary: the discriminator is incompleteness, not the format.
+        # A structured candidate with no skipped nodes still wins a tie against a
+        # base64 candidate that rejects lines.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "direct", "tag": "direct"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 2)
         self.assertEqual(result.rejected_profiles, 0)
 
     @patch("parsers.subscription.urlopen")

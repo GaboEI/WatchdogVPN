@@ -150,12 +150,26 @@ def _profile_name(proxy: dict[str, Any], protocol: ProtocolType) -> str:
 
 
 def parse_clash_yaml(text: str) -> list[Profile]:
+    profiles, _skipped_nodes = parse_clash_yaml_detailed(text)
+    return profiles
+
+
+def parse_clash_yaml_detailed(text: str) -> tuple[list[Profile], int]:
+    """Parse Clash YAML and report proxies that could not be imported.
+
+    Every entry of a Clash ``proxies:`` section is a node, so a type this build
+    does not support is an unimportable node rather than a harmless extra: it is
+    counted so a structured candidate is never treated as a complete, clean
+    response while entries were silently skipped.
+    """
     proxies = _load_proxies(text)
     profiles: list[Profile] = []
+    skipped_nodes = 0
     for proxy in proxies:
         outbound_type = str(proxy.get("type", "")).lower()
         protocol = _TYPE_TO_PROTOCOL.get(outbound_type)
         if protocol is None:
+            skipped_nodes += 1
             continue
         name = _profile_name(proxy, protocol)
         config = dict(proxy)
@@ -177,4 +191,4 @@ def parse_clash_yaml(text: str) -> list[Profile]:
         profiles.append(profile)
     if not profiles:
         raise ParseError("Clash YAML contains no supported profiles")
-    return profiles
+    return profiles, skipped_nodes

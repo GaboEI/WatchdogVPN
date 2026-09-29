@@ -945,9 +945,7 @@ remove_watchdogvpn_system_account() {
 
 repair_watchdogvpn_shared_state_permissions() {
   local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
-  local private_dir="$target_dir/private"
-  local dns_restore_dir="$target_dir/nm-dns-restore"
-  local tun_dir="$target_dir/nm-tun"
+  local guard_source="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}/privileged_state.py"
   if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
     printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
     return 0
@@ -964,25 +962,14 @@ repair_watchdogvpn_shared_state_permissions() {
   # watchdogvpn-state-guard. Widening any of them would hand a group member
   # control over a path the fixed root helpers later trust.
   #
-  # Symlink entries are never passed to chown or chmod: this tree is
-  # group-writable, so a group member could otherwise place a symlink here and
-  # have the repair change the ownership or mode of whatever it points at
-  # outside the tree (chown/chmod follow symlinks by name). A link is left
-  # exactly as it is and reported instead.
-  run_step sudo find "$target_dir" \
-    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
-    ! -type l -exec chown watchdogvpn:watchdogvpn {} +
-  run_step sudo find "$target_dir" \
-    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
-    ! -type l -type d -exec chmod 2770 {} +
-  run_step sudo find "$target_dir" \
-    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
-    ! -type l -type f -exec chmod 0660 {} +
-  if [[ -n "$(find "$target_dir" \
-    \( -path "$private_dir" -o -path "$dns_restore_dir" -o -path "$tun_dir" \) -prune -o \
-    -type l -print -quit 2>/dev/null)" ]]; then
-    printf '[WARN] WatchdogVPN shared state contains symlink entries; their targets were left untouched: %s\n' "$target_dir"
-  fi
+  # The repair is descriptor-relative and never follows a symlink: this tree is
+  # group-writable, so a member could otherwise plant an entry and have a
+  # pathname-based chown/chmod change the ownership or mode of whatever it
+  # points at outside the tree. The guard opens each entry with O_NOFOLLOW
+  # relative to its already-open parent, re-confirms the opened inode and
+  # applies ownership and mode through that descriptor only; a racing swap is
+  # left untouched and reported instead.
+  run_step sudo python3 "$guard_source" repair-shared "$target_dir"
 }
 
 prepare_watchdogvpn_private_state() {
