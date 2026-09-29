@@ -760,6 +760,27 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(len(clash_profiles), 1)
         self.assertEqual(clash_skipped, 1)
 
+    def test_singbox_counts_unimportable_objects_but_not_control_outbounds(self) -> None:
+        # PR25-F8: every structured sing-box outbound object that cannot become
+        # an importable profile is incompleteness, even if it is empty, has only
+        # a tag, or names an unsupported type. Established non-node control
+        # outbounds remain excluded from the rejected/skipped count.
+        base_node = {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"}
+        cases = (
+            ("empty object", {}, 1),
+            ("unknown-tag object", {"tag": "mystery"}, 1),
+            ("unsupported type", {"type": "tor", "tag": "tor-node"}, 1),
+            ("dns control", {"type": "dns", "tag": "dns-out"}, 0),
+            ("direct control", {"type": "direct", "tag": "direct"}, 0),
+            ("selector control", {"type": "selector", "tag": "selector", "outbounds": ["a"]}, 0),
+        )
+        for label, outbound, expected_skipped in cases:
+            with self.subTest(label=label):
+                payload = json.dumps({"outbounds": [base_node, outbound]})
+                profiles, skipped_nodes = parse_singbox_json_detailed(payload)
+                self.assertEqual(len(profiles), 1)
+                self.assertEqual(skipped_nodes, expected_skipped)
+
     @patch("parsers.subscription._fetch")
     def test_incomplete_structured_candidate_is_not_ranked_as_cleaner(self, fetch_mock) -> None:
         # PR25-F6: base64 candidate (2 accepted, 1 rejected) versus a structured
@@ -866,6 +887,49 @@ class SubscriptionParserTests(unittest.TestCase):
 
         self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
         self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_unimportable_object_structured_entry_is_not_treated_as_complete(self, fetch_mock) -> None:
+        # PR25-F8: unimportable outbound objects are counted even when they are
+        # syntactically valid JSON objects, so a structured candidate with the
+        # same accepted-profile count cannot beat a cleaner base64 candidate.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        unimportable_objects = (
+            {},
+            {"tag": "mystery"},
+            {"type": "tor", "tag": "tor-node"},
+        )
+        for unimportable in unimportable_objects:
+            with self.subTest(unimportable=unimportable):
+                structured_candidate = json.dumps(
+                    {
+                        "outbounds": [
+                            {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                            {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                            unimportable,
+                        ]
+                    }
+                )
+
+                def fetch_response(_url: str, *, user_agent: str):
+                    if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                        return base64_candidate, {}
+                    if user_agent == "Karing":
+                        return structured_candidate, {}
+                    raise ParseError("subscription request rejected with HTTP status 403")
+
+                fetch_mock.reset_mock(side_effect=True)
+                fetch_mock.side_effect = fetch_response
+
+                with patch.dict("os.environ", {}, clear=True):
+                    result = fetch_subscription("https://example.com/sub")
+
+                self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+                self.assertEqual(result.rejected_profiles, 1)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:

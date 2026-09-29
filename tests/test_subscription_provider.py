@@ -444,6 +444,59 @@ class SubscriptionProviderTests(unittest.TestCase):
             names = {profile.name for profile in ProfileStore(profile_path).list()}
             self.assertEqual(names, {"One", "Two"})
 
+    def test_unimportable_structured_objects_cannot_replace_last_known_good(self) -> None:
+        # PR25-F8: outbound objects that are not importable profiles are
+        # incompleteness even when they are syntactically valid objects. A known
+        # control outbound such as DNS is ignored, but empty, unknown-tag and
+        # unsupported-type objects make the refresh fail closed and preserve the
+        # last known-good provider state byte-for-byte.
+        last_known_good = SubscriptionFetchResult(
+            profiles=[
+                _profile("one", "One", "one.example.com"),
+                _profile("two", "Two", "two.example.com"),
+            ]
+        )
+        structured_with_unimportable_objects = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "dns", "tag": "dns-out"},
+                    {},
+                    {"tag": "mystery"},
+                    {"type": "tor", "tag": "tor-node"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return structured_with_unimportable_objects, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            with patch(
+                "providers.subscription_provider.fetch_subscription", side_effect=[last_known_good]
+            ):
+                stored = provider.add("https://provider.example/sub", "Provider")
+            provider_before = provider_path.read_bytes()
+            profile_before = profile_path.read_bytes()
+
+            with patch("parsers.subscription._fetch", side_effect=fetch_response):
+                with self.assertRaisesRegex(ParseError, "incomplete profile set"):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+            names = {profile.name for profile in ProfileStore(profile_path).list()}
+            self.assertEqual(names, {"One", "Two"})
+
     def test_complete_structured_candidate_updates_successfully(self) -> None:
         # PR25-F6 boundary: a structured response with no skipped nodes remains a
         # valid complete replacement.
