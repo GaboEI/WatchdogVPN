@@ -170,6 +170,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/watchdog
   remove_root_path /usr/local/bin/watchdogvpn
   remove_root_path /usr/local/bin/watchdogvpn-daemon
+  remove_root_path /usr/local/bin/watchdogvpn-state-guard
 
   remove_root_path /usr/local/sbin/vpn_domain_bypass_apply.sh
 

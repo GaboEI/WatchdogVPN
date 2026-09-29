@@ -314,4 +314,30 @@ for script in install.sh update.sh doctor.sh; do
 done
 assert_contains "$ROOT_DIR/uninstall.sh" 'watchdogvpn.desktop' "uninstall must still clean up a desktop launcher file left by a pre-removal install"
 
+# PR25-F1: the shared-state permission repair runs over the group-writable
+# /var/lib/watchdogvpn, so no ownership or mode pass may hand a symlink to
+# chown/chmod (both follow a link given by name and would change whatever it
+# points at outside the tree). Skipped links must be reported instead.
+repair_body="$(awk '/^repair_watchdogvpn_shared_state_permissions\(\) \{/{seen=1} seen{print} seen && /^\}$/{exit}' "$ROOT_DIR/lib/runtime.sh")"
+if ! grep -Fq -- 'repair_watchdogvpn_shared_state_permissions()' <<<"$repair_body"; then
+  printf 'FAIL: could not read the shared-state permission repair body\n' >&2
+  exit 1
+fi
+if grep -n -- '-exec chown\|-exec chmod' <<<"$repair_body" | grep -v -- '-type l' >/dev/null; then
+  printf 'FAIL: a shared-state repair pass can hand a symlink to chown/chmod\n' >&2
+  exit 1
+fi
+if ! grep -Fq -- '-type l -print -quit' <<<"$repair_body"; then
+  printf 'FAIL: shared-state repair must detect symlink entries\n' >&2
+  exit 1
+fi
+if ! grep -Fq -- 'their targets were left untouched' <<<"$repair_body"; then
+  printf 'FAIL: shared-state repair must report symlink entries it refused to follow\n' >&2
+  exit 1
+fi
+
+# PR25-F2: the state-guard wrapper is installed by this change set, so the
+# supported uninstall must remove it with the rest of the runtime files.
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-state-guard' "supported uninstall must remove the installed state-guard wrapper"
+
 echo "install security contract checks passed"

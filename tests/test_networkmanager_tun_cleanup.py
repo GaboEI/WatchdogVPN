@@ -4,8 +4,11 @@ import subprocess
 import tempfile
 import unittest
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import drivers.networkmanager_tun_cleanup as nm_tun_cleanup
 import privileged_state
@@ -644,7 +647,7 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
         with self._patched_registry_and_legacy(legacy_path), patch(
             "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
         ), patch(
-            "drivers.networkmanager_tun_cleanup.os.rename", side_effect=OSError("boom")
+            "drivers.networkmanager_tun_cleanup.os.link", side_effect=OSError("boom")
         ):
             with self.assertRaises(NetworkManagerTunCleanupError):
                 migrate_legacy_owned_uuid_registry()
@@ -657,6 +660,56 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
             )
         )
         self.assertEqual(legacy_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
+
+    def test_migrate_never_replaces_registry_created_after_migration_begins(self) -> None:
+        # PR25-F3: presence is decided and published atomically, so a live
+        # registration created after the migration's presence check wins and the
+        # stale legacy UUID is never published over it.
+        legacy_path = self._write_legacy_registry(f"{UUID_ONE}\n")
+
+        def interleaved_legacy_read():
+            # Deterministic interleave: the live registry appears between the
+            # presence check and the publication.
+            self.registry_dir.mkdir(mode=0o700, exist_ok=True)
+            self.registry_path.write_text(f"{UUID_TWO}\n", encoding="ascii")
+            self.registry_path.chmod(0o600)
+            return UUID_ONE
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch(
+            "drivers.networkmanager_tun_cleanup._read_legacy_owned_uuid_registry",
+            side_effect=interleaved_legacy_read,
+        ):
+            self.assertFalse(migrate_legacy_owned_uuid_registry())
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_TWO}\n")
+        self.assertEqual(self.registry_path.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(
+            any(
+                path.name.startswith(f".{self.registry_path.name}")
+                for path in self.registry_dir.glob(".*")
+            )
+        )
+        self.assertEqual(legacy_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
+
+    def test_no_replace_publish_keeps_an_existing_registry_byte_identical(self) -> None:
+        # PR25-F3 primitive: the no-replace publication used by migration never
+        # overwrites an existing entry; the live-registration path still may.
+        self.registry_dir.mkdir(mode=0o700)
+        self.registry_path.write_text(f"{UUID_TWO}\n", encoding="ascii")
+        self.registry_path.chmod(0o600)
+
+        with self._patched_registry():
+            self.assertFalse(
+                nm_tun_cleanup._write_owned_uuid_registry(UUID_ONE, replace=False)
+            )
+            self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_TWO}\n")
+
+            self.assertTrue(
+                nm_tun_cleanup._write_owned_uuid_registry(UUID_ONE, replace=True)
+            )
+            self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
 
     def test_migrated_authority_never_removes_foreign_same_name_profile(self) -> None:
         # Requirement 6: only the migrated UUID authorises a deletion; a foreign

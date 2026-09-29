@@ -106,9 +106,15 @@ def migrate_legacy_owned_uuid_registry() -> bool:
     root-owned, a regular file, not writable by group or others, reached without
     symlink traversal, and a single unambiguous UUID -- because a registry the
     unprivileged daemon could write must never be promoted to root authority. It
-    never overwrites an existing durable registry, never removes the legacy
-    source, and never authorises a delete on its own; an absent, unsafe,
-    malformed or ambiguous source is a no-op with no authority created.
+    never removes the legacy source and never authorises a delete on its own; an
+    absent, unsafe, malformed or ambiguous source is a no-op with no authority
+    created.
+
+    The durable registry is published only when no entry exists at the moment of
+    publication: the check and the write are one atomic no-replace operation, so
+    a live registration created by the daemon after this migration begins is
+    never overwritten by the stale legacy UUID. A presence that wins the race is
+    reported as no migration.
     """
     if os.geteuid() != 0:
         raise NetworkManagerTunCleanupError(
@@ -122,8 +128,7 @@ def migrate_legacy_owned_uuid_registry() -> bool:
         return False
     if legacy_uuid is None:
         return False
-    _write_owned_uuid_registry(legacy_uuid)
-    return True
+    return _write_owned_uuid_registry(legacy_uuid, replace=False)
 
 
 def _owned_uuid_registry_present() -> bool:
@@ -159,11 +164,20 @@ def _parse_connection_rows(output: str) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def _write_owned_uuid_registry(connection_uuid: str) -> None:
+def _write_owned_uuid_registry(connection_uuid: str, *, replace: bool = True) -> bool:
+    """Write the durable registry, atomically and never partially visible.
+
+    With ``replace=True`` (the live-registration path) an existing entry is
+    atomically replaced. With ``replace=False`` (the legacy-migration path) the
+    entry is published only when no entry exists at that instant, so a registry
+    created concurrently is never overwritten. Returns True when the registry
+    was published by this call.
+    """
     if not _is_uuid(connection_uuid):
         raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN UUID")
     parent_fd: int | None = None
     tmp_name: str | None = None
+    published = False
     try:
         _ensure_registry_parent()
         parent_fd = _open_directory(OWNED_UUIDS_PATH.parent)
@@ -187,8 +201,26 @@ def _write_owned_uuid_registry(connection_uuid: str) -> None:
             os.fsync(tmp_fd)
         finally:
             os.close(tmp_fd)
-        os.rename(tmp_name, OWNED_UUIDS_PATH.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        tmp_name = None
+        if replace:
+            os.rename(tmp_name, OWNED_UUIDS_PATH.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            tmp_name = None
+            published = True
+        else:
+            # link(2) fails with FileExistsError when the destination already
+            # exists, so the decision and the publication are one atomic step.
+            try:
+                os.link(
+                    tmp_name,
+                    OWNED_UUIDS_PATH.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                return False
+            os.unlink(tmp_name, dir_fd=parent_fd)
+            tmp_name = None
+            published = True
         os.fsync(parent_fd)
         _read_owned_uuid_registry()
     except OSError as exc:
@@ -203,6 +235,7 @@ def _write_owned_uuid_registry(connection_uuid: str) -> None:
                 pass
         if parent_fd is not None:
             os.close(parent_fd)
+    return published
 
 
 def _read_owned_uuid_registry() -> str | None:
