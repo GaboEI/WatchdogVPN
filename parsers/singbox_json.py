@@ -173,17 +173,31 @@ def _looks_like_node(outbound: dict[str, Any]) -> bool:
     return any(key in outbound for key in ("server", "server_port", "settings"))
 
 
+def _count_malformed_outbounds(payload: dict[str, Any]) -> int:
+    """Entries of the ``outbounds`` list that are not objects.
+
+    ``_coerce_outbounds`` drops them, so they must be counted here: a response
+    that mixes nodes with malformed entries is incomplete and must not be
+    ranked as a complete, clean candidate.
+    """
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return 0
+    return sum(1 for outbound in outbounds if not isinstance(outbound, dict))
+
+
 def parse_singbox_json_detailed(data: str | dict[str, Any]) -> tuple[list[Profile], int]:
     """Parse sing-box JSON and report nodes that could not be imported.
 
     An outbound that is neither a supported protocol nor one of sing-box's
     control-flow entries but still carries a connection target is an
     unimportable node: it is counted so a structured candidate is never treated
-    as a complete, clean response while entries were silently skipped.
+    as a complete, clean response while entries were silently skipped. Malformed
+    (non-object) ``outbounds`` entries are counted too.
     """
     payload = _load_json(data)
     profiles: list[Profile] = []
-    skipped_nodes = 0
+    skipped_nodes = _count_malformed_outbounds(payload)
     for outbound in _coerce_outbounds(payload):
         profile = _build_profile(outbound) or _build_v2ray_profile(outbound)
         if profile is None:

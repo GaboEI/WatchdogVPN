@@ -741,6 +741,20 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(len(profiles), 2)
         self.assertEqual(skipped_nodes, 1)
 
+        # A malformed (non-object) outbounds entry is dropped by the loader and
+        # must still be counted so the candidate is not reported as complete.
+        malformed = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"},
+                    "malformed-node",
+                ]
+            }
+        )
+        malformed_profiles, malformed_skipped = parse_singbox_json_detailed(malformed)
+        self.assertEqual(len(malformed_profiles), 1)
+        self.assertEqual(malformed_skipped, 1)
+
         clash = "proxies:\n  - name: a\n    type: vless\n    server: a.example.com\n    port: 443\n    uuid: u1\n  - name: b\n    type: ssr\n    server: b.example.com\n    port: 443\n"
         clash_profiles, clash_skipped = parse_clash_yaml_detailed(clash)
         self.assertEqual(len(clash_profiles), 1)
@@ -817,6 +831,41 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(result.user_agent, "Karing")
         self.assertEqual(len(result.profiles), 2)
         self.assertEqual(result.rejected_profiles, 0)
+
+    @patch("parsers.subscription._fetch")
+    def test_malformed_structured_entry_is_not_treated_as_complete(self, fetch_mock) -> None:
+        # Codex follow-up on the PR25-F6 fix: a malformed (non-object) outbounds
+        # entry is dropped by the loader, so it must still count as incompleteness
+        # and must not let the structured candidate win a tie as "cleaner".
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    "malformed-node",
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(result.rejected_profiles, 1)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:
