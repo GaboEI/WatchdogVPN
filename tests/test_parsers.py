@@ -631,6 +631,10 @@ class SubscriptionParserTests(unittest.TestCase):
             sorted(profile.config["host"] for profile in result.profiles),
             ["clean.example.com", "clean.example.com"],
         )
+        # The returned metadata belongs to the selected candidate, not to the
+        # discarded first one (which sent no subscription-userinfo header).
+        self.assertEqual(result.metadata.get("traffic_used"), "3.0 B")
+        self.assertEqual(result.metadata.get("traffic_limit"), "3.0 B")
         self.assertEqual(fetch_mock.call_count, 5)
 
     @patch("parsers.subscription._fetch")
