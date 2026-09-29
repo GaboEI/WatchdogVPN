@@ -26,6 +26,35 @@ import privileged_state
 
 UUID = "11111111-1111-1111-1111-111111111111"
 
+# A nonzero owner UID used to make the real trust-validation path observe a
+# non-root owner independently of the UID the test runner runs as.
+NON_ROOT_OWNER_UID = 4321
+
+
+def stat_result_with_uid(metadata: os.stat_result, uid: int) -> os.stat_result:
+    """Return ``metadata`` with a different owner UID.
+
+    A root-capable or containerized runner creates temporary files as root, so
+    a test that needs the trust check to see a non-root owner cannot rely on the
+    file's real owner: it supplies the observed metadata instead. Only the owner
+    UID is replaced; mode, size, inode and timestamps stay as observed, so the
+    validation itself is unchanged.
+    """
+    return os.stat_result(
+        (
+            metadata.st_mode,
+            metadata.st_ino,
+            metadata.st_dev,
+            metadata.st_nlink,
+            uid,
+            metadata.st_gid,
+            metadata.st_size,
+            metadata.st_atime,
+            metadata.st_mtime,
+            metadata.st_ctime,
+        )
+    )
+
 
 def legacy_runtime_payload() -> dict[str, object]:
     return {
@@ -365,15 +394,54 @@ class NetworkManagerRestoreTests(unittest.TestCase):
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
             os.chmod(legacy, 0o600)
+            legacy_stat = os.stat(legacy)
+            legacy_identity = (legacy_stat.st_dev, legacy_stat.st_ino)
+            real_fstat = os.fstat
+
+            def fstat_as_non_root_owner(fd: int) -> os.stat_result:
+                # A root-capable or containerized runner owns this temporary file
+                # as root, which would satisfy the trust check; the observed
+                # metadata is supplied instead so the real validation path always
+                # sees a nonzero owner UID.
+                metadata = real_fstat(fd)
+                if (metadata.st_dev, metadata.st_ino) == legacy_identity:
+                    return stat_result_with_uid(metadata, NON_ROOT_OWNER_UID)
+                return metadata
+
             with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
                 nm_restore, "root_snapshot_exists", return_value=False
             ), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore.os, "fstat", side_effect=fstat_as_non_root_owner
             ), patch.object(nm_restore, "save_root_snapshot") as save:
-                # The real trust check runs: the file is owned by the test user.
+                # The real trust check runs: the observed file owner is nonzero
+                # whatever UID the test runner uses.
                 self.assertFalse(migrate_legacy_snapshot())
 
             save.assert_not_called()
+
+    def test_legacy_trust_check_still_requires_a_root_owner(self) -> None:
+        # Guard against weakening the check while making the refusal test
+        # runner-independent: only a root-owned, non-group/other-writable
+        # snapshot is trusted.
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            os.chmod(legacy, 0o600)
+            file_stat = os.stat(legacy)
+
+        def with_owner_and_mode(uid: int, mode: int) -> os.stat_result:
+            fields = list(file_stat)
+            fields[0] = mode
+            fields[4] = uid
+            return os.stat_result(tuple(fields))
+
+        self.assertTrue(_legacy_snapshot_is_trusted(with_owner_and_mode(0, 0o600)))
+        self.assertFalse(
+            _legacy_snapshot_is_trusted(with_owner_and_mode(NON_ROOT_OWNER_UID, 0o600))
+        )
+        self.assertFalse(_legacy_snapshot_is_trusted(with_owner_and_mode(0, 0o660)))
 
     def test_migrate_refuses_symlink_legacy_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
