@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Callable
@@ -21,6 +22,7 @@ from cli.main import (
     _awg_status,
     _awg_update,
     _awg_verify,
+    main,
 )
 from diagnostics import amneziawg_lifecycle as lifecycle
 from diagnostics.amneziawg_lifecycle import (
@@ -91,6 +93,23 @@ def _probe_sha(sha: str) -> RuntimeProbe:
         for name in ("awg", "awg-quick", "amneziawg-go")
     }
     return RuntimeProbe(components=components, all_present=True, runtime_available=True)
+
+
+def _fixed_clock(recorded_at: str) -> mock._patch:
+    """Patch the lifecycle module clock so a commit timestamp is deterministic.
+
+    Used only to place a pre-existing registry fragment on the exact install
+    timestamp the next registration would use, which is the fail-closed overlap
+    case.
+    """
+    value = datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+
+    class _Clock:
+        @staticmethod
+        def now(tz: object = None) -> datetime:
+            return value
+
+    return mock.patch.object(lifecycle, "datetime", _Clock)
 
 
 def _certified_releases() -> list[ResolvedRelease]:
@@ -530,6 +549,141 @@ class InstallRegistryTests(unittest.TestCase):
     def test_previous_release_empty_when_no_history(self) -> None:
         self.assertEqual(previous_installed_release(self._probe_with_sha("11" * 32)), [])
 
+    # --- Finding S-03: the official pair is committed as one transaction -----
+
+    _PLATFORM = {"distro": "opensuse_leap", "version": "15.6", "arch": "x86_64"}
+
+    def _candidate_pair(self, tag: str = "vNew") -> list[ResolvedRelease]:
+        return [
+            ResolvedRelease(AMNEZIAWG_TOOLS_REPO, tag, "aa" * 20, "2026-09-30T00:00:00Z"),
+            ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, tag + "2", "bb" * 20, "2026-09-30T00:00:00Z"),
+        ]
+
+    def _raw_fragment(self, repository: str, *, commit: str, recorded_at: str, sha: str = "11" * 32) -> dict[str, object]:
+        return {
+            "repository": repository,
+            "tag": "vCorrupt",
+            "commit": commit,
+            "resolved_at": "2026-09-01T00:00:00Z",
+            "recorded_at": recorded_at,
+            "arch": "x86_64",
+            "distro": "opensuse_leap",
+            "binary_sha256": {name: sha for name in ("awg", "awg-quick", "amneziawg-go")},
+            "build_manifest_sha256": "corrupt-manifest",
+        }
+
+    def _registry_file(self) -> Path:
+        return Path(self._tmp.name) / lifecycle.INSTALL_REGISTRY_NAME
+
+    def _write_raw_registry(self, installed: list[dict[str, object]]) -> None:
+        self._registry_file().write_text(
+            json.dumps({"installed": installed, "pending": []}, indent=1), encoding="utf-8"
+        )
+
+    def _raw_installed(self) -> list[dict[str, object]]:
+        return json.loads(self._registry_file().read_text(encoding="utf-8"))["installed"]
+
+    def test_corrupt_single_component_overlap_records_one_complete_group(self) -> None:
+        """S-03: a fragment matching one component must not half-record the pair."""
+        releases = self._candidate_pair()
+        # Pre-existing corrupt fragment: tools only, same commit and digests as
+        # the candidate's tools component, recorded under another timestamp.
+        self._write_raw_registry([self._raw_fragment(AMNEZIAWG_TOOLS_REPO, commit="aa" * 20, recorded_at="t-corrupt")])
+        created = record_installed_release(
+            releases, self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM)
+        )
+        self.assertEqual(
+            sorted(entry.repository for entry in created),
+            sorted([AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO]),
+        )
+        # One coherent group identity for the new pair.
+        self.assertEqual(len({entry.recorded_at for entry in created}), 1)
+        self.assertTrue(all(entry.recorded_at for entry in created))
+        # Exactly one complete valid group is durable and surfaced.
+        history = lifecycle.load_installed_history()
+        self.assertEqual(len(history), 2)
+        self.assertEqual({entry.tag for entry in history}, {"vNew", "vNew2"})
+        # The pre-existing corrupt fragment is preserved, never deleted.
+        raw = self._raw_installed()
+        self.assertEqual(len(raw), 3)
+        self.assertEqual(sum(1 for entry in raw if entry["recorded_at"] == "t-corrupt"), 1)
+
+    def test_corrupt_overlap_keeps_unrelated_valid_history_unchanged(self) -> None:
+        older = [
+            ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vOld", "cc" * 20, "2026-09-01T00:00:00Z"),
+            ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, "vOld2", "dd" * 20, "2026-09-01T00:00:00Z"),
+        ]
+        record_installed_release(older, self._probe_with_sha("22" * 32), platform=dict(self._PLATFORM))
+        older_raw = json.dumps(self._raw_installed(), sort_keys=True)
+        # Append a corrupt tools-only fragment overlapping the *new* candidate.
+        raw = self._raw_installed()
+        raw.append(self._raw_fragment(AMNEZIAWG_TOOLS_REPO, commit="aa" * 20, recorded_at="t-corrupt"))
+        self._write_raw_registry(raw)
+        record_installed_release(self._candidate_pair(), self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM))
+        after = self._raw_installed()
+        # The earlier valid pair is byte-identical (never altered or dropped).
+        self.assertEqual(json.dumps(after[:2], sort_keys=True), older_raw)
+        self.assertEqual(len(lifecycle.load_installed_history()), 4)
+
+    def test_valid_repeat_registration_deduplicates_the_pair(self) -> None:
+        releases = self._candidate_pair()
+        first = record_installed_release(releases, self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM))
+        raw_after_first = self._raw_installed()
+        second = record_installed_release(releases, self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM))
+        # Nothing appended: the intact pair is deduplicated as a whole.
+        self.assertEqual(self._raw_installed(), raw_after_first)
+        self.assertEqual({entry.recorded_at for entry in second}, {first[0].recorded_at})
+        self.assertEqual(len(lifecycle.load_installed_history()), 2)
+
+    def test_corrupt_fragment_does_not_deduplicate_the_complete_pair(self) -> None:
+        """A matching single component is not a completed install."""
+        raw = [self._raw_fragment(AMNEZIAWG_TRANSPORT_REPO, commit="bb" * 20, recorded_at="t-corrupt")]
+        self._write_raw_registry(raw)
+        created = record_installed_release(
+            self._candidate_pair(), self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM)
+        )
+        self.assertEqual(len(created), 2)
+        self.assertNotIn("t-corrupt", {entry.recorded_at for entry in created})
+
+    def test_occupied_install_timestamp_fails_closed_without_writing(self) -> None:
+        occupied = "2026-09-30T12:00:00.000000Z"
+        self._write_raw_registry([self._raw_fragment(AMNEZIAWG_TOOLS_REPO, commit="ff" * 20, recorded_at=occupied)])
+        before = self._registry_file().read_bytes()
+        with _fixed_clock(occupied):
+            with self.assertRaises(ValueError):
+                record_installed_release(
+                    self._candidate_pair(), self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM)
+                )
+        self.assertEqual(self._registry_file().read_bytes(), before)
+        self.assertEqual(lifecycle.load_installed_history(), [])
+
+    def test_incomplete_and_duplicate_pairs_are_rejected_without_writing(self) -> None:
+        self._write_raw_registry([])
+        before = self._registry_file().read_bytes()
+        for releases in (
+            [ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vA", "aa" * 20, "2026-09-30T00:00:00Z")],
+            [
+                ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vA", "aa" * 20, "2026-09-30T00:00:00Z"),
+                ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vA", "aa" * 20, "2026-09-30T00:00:00Z"),
+            ],
+        ):
+            with self.assertRaises(ValueError):
+                record_installed_release(list(releases), self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM))
+        self.assertEqual(self._registry_file().read_bytes(), before)
+
+    def test_recorded_pair_supports_rollback_and_survives_a_corrupt_neighbour(self) -> None:
+        older = [
+            ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "vOld", "cc" * 20, "2026-09-01T00:00:00Z"),
+            ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, "vOld2", "dd" * 20, "2026-09-01T00:00:00Z"),
+        ]
+        record_installed_release(older, self._probe_with_sha("22" * 32), platform=dict(self._PLATFORM))
+        raw = self._raw_installed()
+        raw.append(self._raw_fragment(AMNEZIAWG_TOOLS_REPO, commit="aa" * 20, recorded_at="t-corrupt"))
+        self._write_raw_registry(raw)
+        record_installed_release(self._candidate_pair(), self._probe_with_sha("11" * 32), platform=dict(self._PLATFORM))
+        previous = previous_installed_release(self._probe_with_sha("11" * 32))
+        self.assertEqual(sorted(entry.tag for entry in previous), ["vOld", "vOld2"])
+
 
 class BuildManifestTests(unittest.TestCase):
     PLATFORM = {"arch": "x86_64", "distro": "opensuse_leap", "version": "15.6"}
@@ -949,6 +1103,102 @@ class CliHandlerTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertTrue(payload["rolled_back"])
         self.assertEqual({entry["commit"] for entry in payload["previous_releases"]}, {"aa" * 20, "ab" * 20})
+
+    # --- Finding S-03 through the real `watchdog awg verify` path ------------
+
+    def _write_raw_registry(self, installed: list[dict[str, object]]) -> None:
+        Path(self._tmp.name, "amneziawg_installed.json").write_text(
+            json.dumps({"installed": installed, "pending": []}, indent=1), encoding="utf-8"
+        )
+
+    def _corrupt_tools_fragment(self, *, commit: str, recorded_at: str, sha: str = "aa" * 32) -> dict[str, object]:
+        return {
+            "repository": AMNEZIAWG_TOOLS_REPO,
+            "tag": "vCorrupt",
+            "commit": commit,
+            "resolved_at": "2026-09-01T00:00:00Z",
+            "recorded_at": recorded_at,
+            "arch": "x86_64",
+            "distro": "opensuse_leap",
+            "binary_sha256": {name: sha for name in ("awg", "awg-quick", "amneziawg-go")},
+            "build_manifest_sha256": "corrupt-manifest",
+        }
+
+    def test_awg_verify_over_corrupt_fragment_records_one_complete_pair(self) -> None:
+        releases = _certified_releases()
+        self._write_raw_registry(
+            [
+                self._corrupt_tools_fragment(
+                    commit=CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], recorded_at="t-corrupt"
+                )
+            ]
+        )
+        store_pending_releases(releases)
+        self._write_manifest(releases, "aa" * 32)
+        with self._matching_platform(), mock.patch(
+            "cli.main.probe_runtime", return_value=_probe(awg=True, awg_quick=True, amneziawg_go=True)
+        ):
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                rc = _awg_verify(self._args(json_output=True))
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["recorded"])
+        self.assertEqual(len(payload["recorded_releases"]), 2)
+        history = lifecycle.load_installed_history()
+        self.assertEqual(len(history), 2)
+        self.assertEqual(len({entry.recorded_at for entry in history}), 1)
+        self.assertEqual(
+            {entry.repository for entry in history}, {AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO}
+        )
+        self.assertEqual(lifecycle.load_pending_releases(), [])
+
+    def test_awg_verify_deduplicates_a_repeat_registration(self) -> None:
+        releases = _certified_releases()
+        store_pending_releases(releases)
+        self._write_manifest(releases, "aa" * 32)
+        for _ in range(2):
+            store_pending_releases(releases)
+            with self._matching_platform(), mock.patch(
+                "cli.main.probe_runtime", return_value=_probe(awg=True, awg_quick=True, amneziawg_go=True)
+            ):
+                stdout = StringIO()
+                with redirect_stdout(stdout):
+                    rc = _awg_verify(self._args(json_output=True))
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["recorded"])
+            self.assertEqual(len(payload["recorded_releases"]), 2)
+        self.assertEqual(len(lifecycle.load_installed_history()), 2)
+
+    def test_awg_verify_fails_closed_on_occupied_timestamp_and_keeps_pending(self) -> None:
+        releases = _certified_releases()
+        occupied = "2026-09-30T12:00:00.000000Z"
+        self._write_raw_registry([self._corrupt_tools_fragment(commit="ff" * 20, recorded_at=occupied)])
+        store_pending_releases(releases)
+        self._write_manifest(releases, "aa" * 32)
+        registry = Path(self._tmp.name, "amneziawg_installed.json")
+        before = registry.read_bytes()
+        with _fixed_clock(occupied), self._matching_platform(), mock.patch(
+            "cli.main.probe_runtime", return_value=_probe(awg=True, awg_quick=True, amneziawg_go=True)
+        ):
+            with self.assertRaises(ValueError):
+                _awg_verify(self._args(json_output=True))
+        # Nothing was written and the pending recipe survives the failed commit.
+        self.assertEqual(registry.read_bytes(), before)
+        self.assertEqual(lifecycle.load_pending_releases(), releases)
+        self.assertEqual(lifecycle.load_installed_history(), [])
+        # The real CLI surfaces the same fail-closed refusal as a clean error.
+        stdout = StringIO()
+        with _fixed_clock(occupied), self._matching_platform(), mock.patch(
+            "cli.main.probe_runtime", return_value=_probe(awg=True, awg_quick=True, amneziawg_go=True)
+        ), redirect_stdout(stdout):
+            rc = main(["awg", "verify", "--json"])
+        self.assertEqual(rc, 70)
+        envelope = json.loads(stdout.getvalue())
+        self.assertIs(envelope["ok"], False)
+        self.assertEqual(registry.read_bytes(), before)
+        self.assertEqual(lifecycle.load_pending_releases(), releases)
 
 
 if __name__ == "__main__":
