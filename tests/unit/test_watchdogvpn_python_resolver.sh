@@ -72,4 +72,65 @@ if [[ "$resolved" != "$TMP_DIR/python3.10" ]]; then
   exit 1
 fi
 
+# PR25-F10: shared-state repair must invoke the descriptor-relative guard with
+# the same resolved supported interpreter under sudo, not a bare `python3`.
+guard_root="$TMP_DIR/runtime-root"
+state_dir="$TMP_DIR/system-state"
+mkdir -p "$guard_root" "$state_dir"
+touch "$guard_root/privileged_state.py"
+run_step_args="$TMP_DIR/run-step-args"
+fail_msg="$TMP_DIR/fail-msg"
+
+PATH="$TMP_DIR" /bin/bash -c "
+  set -euo pipefail
+  ROOT_DIR='$ROOT_DIR'
+  WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT='$guard_root'
+  WATCHDOGVPN_SYSTEM_SHARED_STATE_DIR='$state_dir'
+  unset _WATCHDOGVPN_PYTHON_RESOLVED
+  source '$ROOT_DIR/lib/common.sh'
+  source '$ROOT_DIR/lib/runtime.sh'
+  run_step() { printf '%s\n' \"\$*\" > '$run_step_args'; }
+  fail() { printf '[FAIL] %s\n' \"\$*\" > '$fail_msg'; }
+  repair_watchdogvpn_shared_state_permissions '$state_dir'
+"
+expected="sudo $TMP_DIR/python3.10 $guard_root/privileged_state.py repair-shared $state_dir"
+actual="$(cat "$run_step_args")"
+if [[ "$actual" != "$expected" ]]; then
+  printf 'FAIL: shared-state repair must run the guard with the resolved supported interpreter\nexpected: %s\nactual:   %s\n' \
+    "$expected" "$actual" >&2
+  exit 1
+fi
+if [[ -s "$fail_msg" ]]; then
+  printf 'FAIL: shared-state repair unexpectedly failed despite a supported interpreter: %s\n' \
+    "$(cat "$fail_msg")" >&2
+  exit 1
+fi
+
+# The failure path must be clear when no supported interpreter resolves.
+rm -f "$run_step_args" "$fail_msg" "$TMP_DIR/python3.10"
+ln -sf "$TMP_DIR/python3.9-like" "$TMP_DIR/python3"
+if PATH="$TMP_DIR" /bin/bash -c "
+  set -euo pipefail
+  ROOT_DIR='$ROOT_DIR'
+  WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT='$guard_root'
+  WATCHDOGVPN_SYSTEM_SHARED_STATE_DIR='$state_dir'
+  unset _WATCHDOGVPN_PYTHON_RESOLVED
+  source '$ROOT_DIR/lib/common.sh'
+  source '$ROOT_DIR/lib/runtime.sh'
+  run_step() { printf '%s\n' \"\$*\" > '$run_step_args'; }
+  fail() { printf '[FAIL] %s\n' \"\$*\" > '$fail_msg'; }
+  repair_watchdogvpn_shared_state_permissions '$state_dir'
+"; then
+  printf 'FAIL: shared-state repair must fail when no supported Python resolves\n' >&2
+  exit 1
+fi
+if [[ -e "$run_step_args" ]]; then
+  printf 'FAIL: shared-state repair must not invoke the guard when Python resolution fails\n' >&2
+  exit 1
+fi
+if ! grep -Fq 'no Python >=3.10 interpreter available for the shared-state repair guard' "$fail_msg"; then
+  printf 'FAIL: missing clear unsupported-Python diagnostic, got: %s\n' "$(cat "$fail_msg" 2>/dev/null || true)" >&2
+  exit 1
+fi
+
 echo "watchdogvpn python resolver checks passed"

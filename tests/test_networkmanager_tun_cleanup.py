@@ -740,6 +740,59 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
         self.assertTrue((moved_dir / self.registry_path.name).exists())
         self.assertFalse(self.registry_path.exists())
 
+    def test_migrate_accepts_valid_live_registration_that_supersedes_legacy_publication(self) -> None:
+        # PR25-F9: the legacy migration may publish first and then be safely
+        # superseded by a concurrent live registration before the final
+        # postcondition read. A validated root-owned durable registry at the
+        # required path is the authoritative current registration even when its
+        # UUID differs from the stale legacy UUID.
+        legacy_path = self._write_legacy_registry(f"{UUID_ONE}\n")
+        real_link = os.link
+
+        def link_then_live_register(source, target, *args, **kwargs):
+            result = real_link(source, target, *args, **kwargs)
+            live_replacement = self.registry_dir / "live-registration.tmp"
+            live_replacement.write_text(f"{UUID_TWO}\n", encoding="ascii")
+            live_replacement.chmod(0o600)
+            os.replace(live_replacement, self.registry_path)
+            return result
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch(
+            "drivers.networkmanager_tun_cleanup.os.link", side_effect=link_then_live_register
+        ):
+            self.assertTrue(migrate_legacy_owned_uuid_registry())
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_TWO}\n")
+        self.assertEqual(self.registry_path.stat().st_mode & 0o777, 0o600)
+
+    def test_migrate_fails_closed_when_superseding_entry_is_unsafe(self) -> None:
+        # PR25-F9 boundary: a different UUID is accepted only after the durable
+        # postcondition read validates the required path. A replacement that is
+        # present but not a trusted root-only registry remains fail-closed.
+        legacy_path = self._write_legacy_registry(f"{UUID_ONE}\n")
+        real_link = os.link
+
+        def link_then_unsafe_replace(source, target, *args, **kwargs):
+            result = real_link(source, target, *args, **kwargs)
+            unsafe_replacement = self.registry_dir / "unsafe-registration.tmp"
+            unsafe_replacement.write_text(f"{UUID_TWO}\n", encoding="ascii")
+            unsafe_replacement.chmod(0o666)
+            os.replace(unsafe_replacement, self.registry_path)
+            return result
+
+        with self._patched_registry_and_legacy(legacy_path), patch(
+            "drivers.networkmanager_tun_cleanup.os.geteuid", return_value=0
+        ), patch(
+            "drivers.networkmanager_tun_cleanup.os.link", side_effect=link_then_unsafe_replace
+        ):
+            with self.assertRaises(NetworkManagerTunCleanupError):
+                migrate_legacy_owned_uuid_registry()
+
+        self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_TWO}\n")
+        self.assertEqual(self.registry_path.stat().st_mode & 0o777, 0o666)
+
     def test_publication_fails_closed_when_a_live_registration_entry_is_replaced(self) -> None:
         # PR25-F5: the live-registration path has the same postcondition; an
         # entry replaced by a different validated registry is not reported as a

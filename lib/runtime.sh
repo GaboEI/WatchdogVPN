@@ -944,9 +944,10 @@ remove_watchdogvpn_system_account() {
 }
 
 repair_watchdogvpn_shared_state_permissions() {
-  local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
+  local system_state_dir="${WATCHDOGVPN_SYSTEM_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
+  local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-$system_state_dir}}" py
   local guard_source="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}/privileged_state.py"
-  if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
+  if [[ "$target_dir" != "$system_state_dir" ]]; then
     printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
     return 0
   fi
@@ -969,7 +970,11 @@ repair_watchdogvpn_shared_state_permissions() {
   # relative to its already-open parent, re-confirms the opened inode and
   # applies ownership and mode through that descriptor only; a racing swap is
   # left untouched and reported instead.
-  run_step sudo python3 "$guard_source" repair-shared "$target_dir"
+  py="$(watchdogvpn_python)" || {
+    fail "no Python >=3.${WATCHDOGVPN_MIN_PYTHON_MINOR} interpreter available for the shared-state repair guard"
+    return 1
+  }
+  run_step sudo "$py" "$guard_source" repair-shared "$target_dir"
 }
 
 prepare_watchdogvpn_private_state() {

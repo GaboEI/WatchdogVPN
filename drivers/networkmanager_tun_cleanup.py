@@ -222,13 +222,19 @@ def _write_owned_uuid_registry(connection_uuid: str, *, replace: bool = True) ->
             tmp_name = None
             published = True
         os.fsync(parent_fd)
-        # Postcondition: the required durable pathname must still resolve to the
-        # validated registry holding exactly the UUID just published. A directory
-        # (or entry) renamed or replaced during publication means the authority
-        # is not durable at the required path, so registration fails closed
-        # instead of being reported as a success.
+        # Postcondition: the required durable pathname must still resolve to a
+        # validated registry. Live registration publishes the current active UUID
+        # and therefore requires the exact UUID it wrote. Legacy migration uses
+        # no-replace publication: a concurrently refreshed live registration may
+        # safely supersede the stale legacy UUID after the link succeeds but
+        # before this final read. In that case the descriptor-relative read below
+        # has already proven there is valid root-owned durable authority at the
+        # required path, so the install can continue with the live UUID as the
+        # authoritative current registration. Missing, unsafe, unreachable or
+        # replaced-elsewhere paths still fail closed because the read raises or
+        # returns no validated UUID.
         durable = _read_owned_uuid_registry()
-        if durable != connection_uuid:
+        if durable is None or (replace and durable != connection_uuid):
             raise NetworkManagerTunCleanupError(
                 "the WatchdogVPN NetworkManager TUN ownership registry is not durable at the required path"
             )
