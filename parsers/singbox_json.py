@@ -158,17 +158,61 @@ def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
 
 
 def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
+    profiles, _skipped_nodes = parse_singbox_json_detailed(data)
+    return profiles
+
+
+# Outbound types that describe sing-box's own control flow rather than a remote
+# proxy node. They are expected in a complete configuration and are therefore
+# never counted as an unimportable node. Every other outbound object that fails
+# to produce an importable profile is counted as incompleteness: a structured
+# candidate must not look clean after silently dropping an outbound object.
+_SINGBOX_CONTROL_TYPES = frozenset({"direct", "block", "dns", "selector", "urltest"})
+
+
+def _is_control_outbound(outbound: dict[str, Any]) -> bool:
+    """True when an outbound is recognized as sing-box control flow."""
+    outbound_type = str(outbound.get("type", "")).lower()
+    return outbound_type in _SINGBOX_CONTROL_TYPES
+
+
+def _count_malformed_outbounds(payload: dict[str, Any]) -> int:
+    """Entries of the ``outbounds`` list that are not objects.
+
+    ``_coerce_outbounds`` drops them, so they must be counted here: a response
+    that mixes nodes with malformed entries is incomplete and must not be
+    ranked as a complete, clean candidate.
+    """
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return 0
+    return sum(1 for outbound in outbounds if not isinstance(outbound, dict))
+
+
+def parse_singbox_json_detailed(data: str | dict[str, Any]) -> tuple[list[Profile], int]:
+    """Parse sing-box JSON and report nodes that could not be imported.
+
+    A recognized sing-box control-flow outbound is not a remote node and is
+    excluded from incompleteness. Every other outbound object that does not
+    yield an importable profile is counted so a structured candidate is never
+    treated as a complete, clean response while entries were silently skipped.
+    Malformed (non-object) ``outbounds`` entries are counted too.
+    """
     payload = _load_json(data)
     profiles: list[Profile] = []
+    skipped_nodes = _count_malformed_outbounds(payload)
     for outbound in _coerce_outbounds(payload):
         profile = _build_profile(outbound) or _build_v2ray_profile(outbound)
-        if profile is not None:
-            try:
-                validate_profile_endpoint(profile)
-                validate_profile_semantics(profile)
-            except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
-                raise ParseError(str(exc)) from exc
-            profiles.append(profile)
+        if profile is None:
+            if not _is_control_outbound(outbound):
+                skipped_nodes += 1
+            continue
+        try:
+            validate_profile_endpoint(profile)
+            validate_profile_semantics(profile)
+        except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
+            raise ParseError(str(exc)) from exc
+        profiles.append(profile)
     if not profiles:
         raise ParseError("sing-box JSON contains no supported profiles")
-    return profiles
+    return profiles, skipped_nodes

@@ -26,6 +26,7 @@ PYTHON_RUNTIME_PACKAGES=(
 PYTHON_RUNTIME_SUPPORT_FILES=(
   doctor.sh
   uninstall.sh
+  privileged_state.py
 )
 PYTHON_RUNTIME_SUPPORT_DIRS=(
   lib
@@ -111,6 +112,7 @@ install_runtime_files() {
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-register drivers.networkmanager_tun_cleanup
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-state-guard privileged_state
 
   install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
@@ -130,13 +132,10 @@ install_runtime_files() {
 
 prepare_networkmanager_dns_restore_state() {
   local state_dir="/var/lib/watchdogvpn/nm-dns-restore"
-  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
-  run_step sudo chmod g-s "$state_dir"
-  run_step sudo chmod 0700 "$state_dir"
-  if root_path_exists "$state_dir/snapshot.json"; then
-    run_step sudo chown root:root "$state_dir/snapshot.json"
-    run_step sudo chmod 0600 "$state_dir/snapshot.json"
-  fi
+  # One no-follow, descriptor-relative primitive creates the root-only 0700
+  # directory and validates an existing root-only snapshot.json without ever
+  # following a pre-created symlink or mutating a pathname after the check.
+  run_step sudo /usr/local/bin/watchdogvpn-state-guard prepare "$state_dir" snapshot.json
   # Promote a legacy runtime DNS snapshot into the durable root-only restore
   # authority so a pre-existing install keeps its restore ability across the
   # upgrade. It is a no-op when a root snapshot already exists or when no
@@ -150,13 +149,15 @@ prepare_networkmanager_dns_restore_state() {
 # helper can read it after a reboot while the daemon never can.
 prepare_networkmanager_tun_cleanup_state() {
   local state_dir="/var/lib/watchdogvpn/nm-tun"
-  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
-  run_step sudo chmod g-s "$state_dir"
-  run_step sudo chmod 0700 "$state_dir"
-  if root_path_exists "$state_dir/owned-uuid"; then
-    run_step sudo chown root:root "$state_dir/owned-uuid"
-    run_step sudo chmod 0600 "$state_dir/owned-uuid"
-  fi
+  # Same shared no-follow primitive as the DNS restore state: create the
+  # root-only 0700 directory and validate an existing root-only owned-uuid
+  # registry without following a pre-created symlink.
+  run_step sudo /usr/local/bin/watchdogvpn-state-guard prepare "$state_dir" owned-uuid
+  # Promote a trusted legacy runtime TUN ownership registry into the durable
+  # root-only authority so a pre-existing install keeps its cleanup ability
+  # across the upgrade. It is a no-op when a durable registry already exists or
+  # when no trustworthy legacy registry is present.
+  run_step sudo /usr/local/bin/watchdogvpn-nm-tun-cleanup migrate
 }
 
 # Detects the interface currently carrying the default IPv4 route - the same
@@ -943,9 +944,10 @@ remove_watchdogvpn_system_account() {
 }
 
 repair_watchdogvpn_shared_state_permissions() {
-  local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
-  local private_dir="$target_dir/private"
-  if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
+  local system_state_dir="${WATCHDOGVPN_SYSTEM_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
+  local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-$system_state_dir}}" py
+  local guard_source="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}/privileged_state.py"
+  if [[ "$target_dir" != "$system_state_dir" ]]; then
     printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
     return 0
   fi
@@ -953,13 +955,26 @@ repair_watchdogvpn_shared_state_permissions() {
     printf '[SKIP] WatchdogVPN shared state directory not present: %s\n' "$target_dir"
     return 0
   fi
-  run_step sudo chown -R watchdogvpn:watchdogvpn "$target_dir"
   # The normal state is intentionally shared with the desktop user's
-  # watchdogvpn group. DNS/FakeIP mappings are browsing metadata, however,
-  # and belong in the service-only subtree rather than being widened by this
-  # generic shared-state repair.
-  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type d -exec chmod 2770 {} +
-  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type f -exec chmod 0660 {} +
+  # watchdogvpn group. Three subtrees are excluded from this generic widening
+  # because they are root-only privileged authority, not shared browsing state:
+  # `private`, and the NetworkManager DNS-restore and TUN-cleanup state
+  # directories, whose owner and mode are enforced by the no-follow
+  # watchdogvpn-state-guard. Widening any of them would hand a group member
+  # control over a path the fixed root helpers later trust.
+  #
+  # The repair is descriptor-relative and never follows a symlink: this tree is
+  # group-writable, so a member could otherwise plant an entry and have a
+  # pathname-based chown/chmod change the ownership or mode of whatever it
+  # points at outside the tree. The guard opens each entry with O_NOFOLLOW
+  # relative to its already-open parent, re-confirms the opened inode and
+  # applies ownership and mode through that descriptor only; a racing swap is
+  # left untouched and reported instead.
+  py="$(watchdogvpn_python)" || {
+    fail "no Python >=3.${WATCHDOGVPN_MIN_PYTHON_MINOR} interpreter available for the shared-state repair guard"
+    return 1
+  }
+  run_step sudo "$py" "$guard_source" repair-shared "$target_dir"
 }
 
 prepare_watchdogvpn_private_state() {

@@ -14,8 +14,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from models.profile import Profile
-from parsers.clash_yaml import parse_clash_yaml
-from parsers.singbox_json import parse_singbox_json
+from parsers.clash_yaml import parse_clash_yaml, parse_clash_yaml_detailed
+from parsers.singbox_json import parse_singbox_json, parse_singbox_json_detailed
 from parsers.uri import ParseError, parse_uri
 
 DEFAULT_SUBSCRIPTION_USER_AGENT = (
@@ -253,9 +253,11 @@ def _parse_profiles_detailed(text: str) -> tuple[list[Profile], int]:
     if _looks_like_html(text):
         raise ParseError("subscription response looks like HTML, not a VPN subscription")
     if _looks_like_json(text):
-        return parse_singbox_json(text), 0
+        # Structured candidates report the nodes they could not import, so an
+        # incomplete structured response is never ranked as if it were clean.
+        return parse_singbox_json_detailed(text)
     if _looks_like_yaml(text):
-        return parse_clash_yaml(text), 0
+        return parse_clash_yaml_detailed(text)
 
     try:
         decoded_lines = _decode_base64_lines(text)
@@ -276,12 +278,12 @@ def _parse_profiles_detailed(text: str) -> tuple[list[Profile], int]:
 
     if "outbounds" in text:
         try:
-            return parse_singbox_json(text), 0
+            return parse_singbox_json_detailed(text)
         except ParseError:
             pass
     if "proxies" in text:
         try:
-            return parse_clash_yaml(text), 0
+            return parse_clash_yaml_detailed(text)
         except ParseError:
             pass
     raise ParseError("unsupported subscription format")
@@ -311,6 +313,18 @@ def _redact_subscription_error(message: str, url: str) -> str:
         if secret:
             redacted = redacted.replace(secret, "<redacted>")
     return _SUBSCRIPTION_URL_TOKEN_RE.sub("<redacted>", redacted)
+
+
+def _candidate_rank(candidate: SubscriptionFetchResult) -> tuple[int, int]:
+    """Rank a retrieved candidate for selection.
+
+    More accepted profiles always wins. When accepted counts tie, fewer
+    rejected profiles wins, because a cleaner complete candidate is the one
+    that can safely replace the provider's last known-good state (T-PR23-04).
+    The caller only replaces the current best on a strictly greater rank, so an
+    exact tie preserves the established first-seen candidate order.
+    """
+    return (len(candidate.profiles), -candidate.rejected_profiles)
 
 
 def fetch_subscription(url: str) -> SubscriptionFetchResult:
@@ -345,7 +359,7 @@ def fetch_subscription(url: str) -> SubscriptionFetchResult:
     if candidates:
         best = candidates[0]
         for candidate in candidates[1:]:
-            if len(candidate.profiles) > len(best.profiles):
+            if _candidate_rank(candidate) > _candidate_rank(best):
                 best = candidate
         return best
     detail = f": {errors[-1]}" if errors else ""

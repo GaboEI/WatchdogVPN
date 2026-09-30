@@ -21,6 +21,10 @@ from parsers import (
     parse_uri,
     parse_wg_config,
 )
+from parsers.clash_yaml import parse_clash_yaml_detailed
+from parsers.singbox_json import parse_singbox_json_detailed
+
+
 from parsers.subscription import (
     DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_SUBSCRIPTION_USER_AGENT,
@@ -555,7 +559,8 @@ class SubscriptionParserTests(unittest.TestCase):
     @patch("parsers.subscription._fetch")
     def test_fetch_returns_best_valid_candidate_across_user_agents(self, fetch_mock) -> None:
         # T-PR23-01: among several valid candidates the best one (most
-        # profiles) is returned, with a stable tie-break on first-seen order.
+        # profiles) is returned; ties fall back to fewer rejected profiles and
+        # then to first-seen order (S-04).
         small = base64.b64encode(
             b"vless://uuid@one.example.com:443?encryption=none"
         ).decode("ascii")
@@ -596,6 +601,335 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertIn("invalid subscription URL", message)
         self.assertNotIn("private-token-value", message)
         self.assertNotIn("https://example.com", message)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_prefers_cleaner_candidate_when_accepted_counts_tie(self, fetch_mock) -> None:
+        # S-04: on an accepted-profile tie the candidate with fewer rejected
+        # profiles wins, so a cleaner complete response is not discarded.
+        cleaner = base64.b64encode(
+            b"vless://uuid@clean.example.com:443?encryption=none\n"
+            b"vless://uuid2@clean.example.com:8443?encryption=none"
+        ).decode("ascii")
+        dirty = base64.b64encode(
+            b"vless://uuid@clean.example.com:443?encryption=none\n"
+            b"vless://uuid2@clean.example.com:8443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return dirty, {}
+            if user_agent == "Karing":
+                return cleaner, {"subscription-userinfo": "upload=1; download=2; total=3"}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 0)
+        self.assertEqual(
+            sorted(profile.config["host"] for profile in result.profiles),
+            ["clean.example.com", "clean.example.com"],
+        )
+        # The returned metadata belongs to the selected candidate, not to the
+        # discarded first one (which sent no subscription-userinfo header).
+        self.assertEqual(result.metadata.get("traffic_used"), "3.0 B")
+        self.assertEqual(result.metadata.get("traffic_limit"), "3.0 B")
+        self.assertEqual(fetch_mock.call_count, 5)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_keeps_accepted_count_priority_over_fewer_rejections(self, fetch_mock) -> None:
+        # S-04 boundary: a candidate with MORE accepted profiles still wins even
+        # when the smaller candidate rejects nothing.
+        fewer_clean = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none"
+        ).decode("ascii")
+        more_dirty = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return more_dirty, {}
+            if user_agent == "Karing":
+                return fewer_clean, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_exact_tie_preserves_first_candidate_order(self, fetch_mock) -> None:
+        # S-04 boundary: when accepted AND rejected counts are equal the
+        # established first-seen candidate order is preserved.
+        first = base64.b64encode(
+            b"vless://uuid@first.example.com:443?encryption=none"
+        ).decode("ascii")
+        second = base64.b64encode(
+            b"vless://uuid@second.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return first, {}
+            if user_agent == "Karing":
+                return second, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(result.profiles[0].config["host"], "first.example.com")
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_tie_break_ignores_rejected_and_failed_candidates(self, fetch_mock) -> None:
+        # S-04: malformed or failed responses can never become winners, so the
+        # cleaner tied candidate is selected even when every other User-Agent
+        # fails or returns nothing usable.
+        clean = base64.b64encode(
+            b"vless://uuid@only.example.com:443?encryption=none"
+        ).decode("ascii")
+        all_rejected = base64.b64encode(b"not-a-supported-uri").decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return all_rejected, {}
+            if user_agent == "Karing":
+                return clean, {}
+            raise ParseError("subscription fetch timed out")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.rejected_profiles, 0)
+
+    @patch("parsers.subscription._fetch")
+    def test_structured_candidates_report_unimportable_nodes(self, fetch_mock) -> None:
+        # PR25-F6: a structured candidate must not look complete while nodes were
+        # silently skipped. sing-box control-flow entries are not nodes and are
+        # therefore not counted.
+        payload = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "b.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "ssr", "tag": "c", "server": "c.example.com", "server_port": 443, "password": "p"},
+                    {"type": "direct", "tag": "direct"},
+                ]
+            }
+        )
+        profiles, skipped_nodes = parse_singbox_json_detailed(payload)
+        self.assertEqual(len(profiles), 2)
+        self.assertEqual(skipped_nodes, 1)
+
+        # A malformed (non-object) outbounds entry is dropped by the loader and
+        # must still be counted so the candidate is not reported as complete.
+        malformed = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"},
+                    "malformed-node",
+                ]
+            }
+        )
+        malformed_profiles, malformed_skipped = parse_singbox_json_detailed(malformed)
+        self.assertEqual(len(malformed_profiles), 1)
+        self.assertEqual(malformed_skipped, 1)
+
+        clash = "proxies:\n  - name: a\n    type: vless\n    server: a.example.com\n    port: 443\n    uuid: u1\n  - name: b\n    type: ssr\n    server: b.example.com\n    port: 443\n"
+        clash_profiles, clash_skipped = parse_clash_yaml_detailed(clash)
+        self.assertEqual(len(clash_profiles), 1)
+        self.assertEqual(clash_skipped, 1)
+
+    def test_singbox_counts_unimportable_objects_but_not_control_outbounds(self) -> None:
+        # PR25-F8: every structured sing-box outbound object that cannot become
+        # an importable profile is incompleteness, even if it is empty, has only
+        # a tag, or names an unsupported type. Established non-node control
+        # outbounds remain excluded from the rejected/skipped count.
+        base_node = {"type": "vless", "tag": "a", "server": "a.example.com", "server_port": 443, "uuid": "u1"}
+        cases = (
+            ("empty object", {}, 1),
+            ("unknown-tag object", {"tag": "mystery"}, 1),
+            ("unsupported type", {"type": "tor", "tag": "tor-node"}, 1),
+            ("dns control", {"type": "dns", "tag": "dns-out"}, 0),
+            ("direct control", {"type": "direct", "tag": "direct"}, 0),
+            ("selector control", {"type": "selector", "tag": "selector", "outbounds": ["a"]}, 0),
+        )
+        for label, outbound, expected_skipped in cases:
+            with self.subTest(label=label):
+                payload = json.dumps({"outbounds": [base_node, outbound]})
+                profiles, skipped_nodes = parse_singbox_json_detailed(payload)
+                self.assertEqual(len(profiles), 1)
+                self.assertEqual(skipped_nodes, expected_skipped)
+
+    @patch("parsers.subscription._fetch")
+    def test_incomplete_structured_candidate_is_not_ranked_as_cleaner(self, fetch_mock) -> None:
+        # PR25-F6: base64 candidate (2 accepted, 1 rejected) versus a structured
+        # candidate with the same accepted count and one unimportable node. The
+        # structured response must not win the tie as the "cleaner" candidate.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "ssr", "tag": "c", "server": "three.example.com", "server_port": 443, "password": "p"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_complete_structured_candidate_still_wins_when_genuinely_cleaner(self, fetch_mock) -> None:
+        # PR25-F6 boundary: the discriminator is incompleteness, not the format.
+        # A structured candidate with no skipped nodes still wins a tie against a
+        # base64 candidate that rejects lines.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    {"type": "direct", "tag": "direct"},
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 0)
+
+    @patch("parsers.subscription._fetch")
+    def test_malformed_structured_entry_is_not_treated_as_complete(self, fetch_mock) -> None:
+        # Codex follow-up on the PR25-F6 fix: a malformed (non-object) outbounds
+        # entry is dropped by the loader, so it must still count as incompleteness
+        # and must not let the structured candidate win a tie as "cleaner".
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        structured_candidate = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                    {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                    "malformed-node",
+                ]
+            }
+        )
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return base64_candidate, {}
+            if user_agent == "Karing":
+                return structured_candidate, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(result.rejected_profiles, 1)
+
+    @patch("parsers.subscription._fetch")
+    def test_unimportable_object_structured_entry_is_not_treated_as_complete(self, fetch_mock) -> None:
+        # PR25-F8: unimportable outbound objects are counted even when they are
+        # syntactically valid JSON objects, so a structured candidate with the
+        # same accepted-profile count cannot beat a cleaner base64 candidate.
+        base64_candidate = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid2@two.example.com:443?encryption=none\n"
+            b"not-a-supported-uri"
+        ).decode("ascii")
+        unimportable_objects = (
+            {},
+            {"tag": "mystery"},
+            {"type": "tor", "tag": "tor-node"},
+        )
+        for unimportable in unimportable_objects:
+            with self.subTest(unimportable=unimportable):
+                structured_candidate = json.dumps(
+                    {
+                        "outbounds": [
+                            {"type": "vless", "tag": "a", "server": "one.example.com", "server_port": 443, "uuid": "u1"},
+                            {"type": "vmess", "tag": "b", "server": "two.example.com", "server_port": 443, "uuid": "u2"},
+                            unimportable,
+                        ]
+                    }
+                )
+
+                def fetch_response(_url: str, *, user_agent: str):
+                    if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                        return base64_candidate, {}
+                    if user_agent == "Karing":
+                        return structured_candidate, {}
+                    raise ParseError("subscription request rejected with HTTP status 403")
+
+                fetch_mock.reset_mock(side_effect=True)
+                fetch_mock.side_effect = fetch_response
+
+                with patch.dict("os.environ", {}, clear=True):
+                    result = fetch_subscription("https://example.com/sub")
+
+                self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+                self.assertEqual(result.rejected_profiles, 1)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:

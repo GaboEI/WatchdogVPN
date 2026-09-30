@@ -13,7 +13,9 @@ openSUSE Tumbleweed (platform-aware):
   a third-party source;
 * a durable local install-metadata registry so provenance is verified by binary
   digest (not inferred from a numeric version) and rollback can restore a real
-  previously installed release;
+  previously installed release; the official tools + transport pair is always
+  committed as one transaction, so a partial or corrupt fragment can never
+  become a half-recorded group;
 * user-executed setup/update/repair/rollback: this module only generates and
   verifies, it never runs zypper, git clone, make, privileged installs or any
   network/interface mutation;
@@ -286,17 +288,27 @@ def _is_complete_release_group(entries: Sequence[InstalledRelease]) -> bool:
     return True
 
 
+def _entries_by_recorded_at(entries: Sequence[InstalledRelease]) -> dict[str, list[InstalledRelease]]:
+    """Group raw entries by `recorded_at`.
+
+    One `recorded_at` identifies one install: the official pair recorded
+    together. The grouping is only used to decide whether a group is a
+    complete, valid release group; it never deletes or rewrites entries.
+    """
+    by_time: dict[str, list[InstalledRelease]] = {}
+    for entry in entries:
+        by_time.setdefault(entry.recorded_at, []).append(entry)
+    return by_time
+
+
 def _complete_installed_groups(entries: Sequence[InstalledRelease]) -> list[InstalledRelease]:
     """Keep only entries that belong to a complete official release group.
 
     Recorded data that is incomplete, duplicated, mixed-time or
     mixed-provenance is ignored (never returned, never selected as a rollback
     candidate) without deleting or altering it in the registry."""
-    by_time: dict[str, list[InstalledRelease]] = {}
-    for entry in entries:
-        by_time.setdefault(entry.recorded_at, []).append(entry)
     valid: list[InstalledRelease] = []
-    for group in by_time.values():
+    for group in _entries_by_recorded_at(entries).values():
         if _is_complete_release_group(group):
             valid.extend(group)
     return valid
@@ -327,6 +339,14 @@ def record_installed_release(
     build evidence; `build_manifest_sha256` ties the recorded entries to that
     evidence. The recorded binary digests are what later provenance checks use;
     a numeric version string is never treated as reliable provenance.
+
+    The official pair is committed as ONE transaction: both components are
+    written together under a single `recorded_at`, so a corrupt or partial
+    registry fragment that happens to match one component can never turn into a
+    half-recorded group. The call either returns the complete valid group that
+    is durable afterwards (recording it atomically, or reusing one already
+    recorded for the same pair) or fails closed with `ValueError`, leaving the
+    registry byte-identical.
     """
     platform = platform or _platform()
     incoming_repositories = sorted(release.repository for release in releases)
@@ -335,7 +355,6 @@ def record_installed_release(
             "recording an AmneziaWG release requires exactly the complete official pair "
             "(amneziawg-tools + amneziawg-go); refusing to record %r" % (incoming_repositories,)
         )
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     sha256_by_name: dict[str, str] = {}
     for name in AMNEZIAWG_OUTPUTS:
         component = probe.components.get(name)
@@ -344,28 +363,58 @@ def record_installed_release(
     # Work from the raw registry so previously recorded (possibly invalid)
     # entries are never dropped by a load-time filter while appending.
     entries = _installed_entries(_load_registry())
-    created: list[InstalledRelease] = []
-    for release in releases:
-        entry = InstalledRelease(
+    releases_by_repo = {release.repository: release for release in releases}
+
+    # Deduplication is a whole-pair decision: an existing group counts as
+    # already recorded only when it is a complete valid group whose components
+    # all match this candidate. A corrupt or partial fragment that matches a
+    # single component is not a valid match and must never suppress the other
+    # half of the pair.
+    for group in _entries_by_recorded_at(entries).values():
+        if not _is_complete_release_group(group):
+            continue
+        if all(
+            releases_by_repo.get(entry.repository) is not None
+            and releases_by_repo[entry.repository].commit == entry.commit
+            and entry.binary_sha256 == sha256_by_name
+            for entry in group
+        ):
+            return list(group)
+
+    recorded_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    if any(entry.recorded_at == recorded_at for entry in entries):
+        # An existing entry already owns this install timestamp. Appending the
+        # pair there would merge with unrelated data, so the transaction cannot
+        # form its own complete group; fail closed without writing anything.
+        raise ValueError(
+            "refusing to record the AmneziaWG release pair: the install timestamp %r is already "
+            "used by an existing registry entry" % (recorded_at,)
+        )
+
+    def _entry(release: ResolvedRelease) -> InstalledRelease:
+        return InstalledRelease(
             repository=release.repository,
             tag=release.tag,
             commit=release.commit,
             resolved_at=release.resolved_at,
-            recorded_at=now,
+            recorded_at=recorded_at,
             arch=str(platform["arch"]),
             distro=str(platform["distro"]),
             binary_sha256=sha256_by_name,
             build_manifest_sha256=build_manifest_sha256,
         )
-        if not any(
-            other.repository == entry.repository and other.commit == entry.commit
-            and other.binary_sha256 == entry.binary_sha256
-            for other in entries
-        ):
-            entries.append(entry)
-            created.append(entry)
-    save_installed_history(entries)
-    return created if created else entries[-len(releases):] if entries else []
+
+    appended = [_entry(releases_by_repo[AMNEZIAWG_TOOLS_REPO]), _entry(releases_by_repo[AMNEZIAWG_TRANSPORT_REPO])]
+    # Postcondition: the pair being committed must be exactly one complete
+    # valid group in the resulting registry, or nothing is written at all.
+    committed_group = [entry for entry in [*entries, *appended] if entry.recorded_at == recorded_at]
+    if len(committed_group) != len(appended) or not _is_complete_release_group(committed_group):
+        raise ValueError(
+            "refusing to record the AmneziaWG release pair: the resulting entries would not form "
+            "one valid complete official pair"
+        )
+    save_installed_history([*entries, *appended])
+    return appended
 
 
 def store_pending_releases(releases: Sequence[ResolvedRelease]) -> None:
@@ -424,9 +473,7 @@ def previous_installed_release(probe: RuntimeProbe) -> list[InstalledRelease]:
     entries = load_installed_history()
     if not entries:
         return []
-    by_time: dict[str, list[InstalledRelease]] = {}
-    for entry in entries:
-        by_time.setdefault(entry.recorded_at, []).append(entry)
+    by_time = _entries_by_recorded_at(entries)
     current = _release_matching_probe(probe, entries)
     for recorded_at in sorted(by_time, reverse=True):
         group = by_time[recorded_at]
