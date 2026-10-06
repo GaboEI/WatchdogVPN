@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "phase-23-7-5r-hardening-remediation", "phase-23-7-5s-post-closure-hardening-remediation"]
+    branches: ["main", "phase-23-7-5r-hardening-remediation", "phase-23-7-5s-post-closure-hardening-remediation", "phase-23-7-6-provider-format-support"]
   pull_request:
 
 permissions:
