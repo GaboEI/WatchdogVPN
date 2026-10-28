@@ -42,3 +42,4 @@ tmp/
 # provenance clean-checkout gate regardless of the user's global excludesFile)
 .claude/
 .omo/
+.opencode/
