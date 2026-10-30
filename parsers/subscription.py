@@ -37,6 +37,19 @@ DEFAULT_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS = 20.0
 DEFAULT_SUBSCRIPTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUBSCRIPTION_READ_CHUNK_BYTES = 64 * 1024
 SUBSCRIPTION_RETRYABLE_HTTP_STATUSES = frozenset({403, 406, 415})
+# Exact URI prefixes that positively identify a plain-text link list. The strict
+# contract requires the literal ``scheme://`` prefix (not a parsed scheme), so
+# these are intentionally explicit rather than derived from SUPPORTED_SCHEMES.
+PLAINTEXT_URI_PREFIXES = (
+    "vless://",
+    "vmess://",
+    "trojan://",
+    "ss://",
+    "hysteria2://",
+    "hy2://",
+    "tuic://",
+    "wg://",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +63,7 @@ class SubscriptionFetchResult:
 class SubscriptionFormat(str, Enum):
     """Subscription formats this build can positively identify and extract."""
 
+    PLAINTEXT_LINK_LIST = "plaintext_link_list"
     BASE64_LINK_LIST = "base64_link_list"
     CLASH_YAML = "clash_yaml"
     SINGBOX_JSON = "singbox_json"
@@ -311,6 +325,46 @@ def _decode_base64_lines(text: str) -> list[str]:
     return [line.strip() for line in decoded.splitlines() if line.strip()]
 
 
+def _match_plaintext_link_list(text: str) -> FormatMatch | FormatCheck:
+    """Positive signature for a plain-text URI list.
+
+    Strict by contract: every non-empty line must start with an exact supported
+    URI prefix. A single offending line rejects the whole body as plain text,
+    and the reason names only its line number so provider credentials carried by
+    the line never reach an error message.
+    """
+    line_count = 0
+    schemes: set[str] = set()
+    for index, raw in enumerate(text.splitlines(), start=1):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        prefix = next(
+            (item for item in PLAINTEXT_URI_PREFIXES if line.startswith(item)),
+            None,
+        )
+        if prefix is None:
+            return FormatCheck(
+                SubscriptionFormat.PLAINTEXT_LINK_LIST,
+                f"line {index} does not start with a supported URI scheme",
+            )
+        schemes.add(prefix[: -len("://")])
+        line_count += 1
+    if line_count == 0:
+        return FormatCheck(
+            SubscriptionFormat.PLAINTEXT_LINK_LIST,
+            "payload contains no non-empty lines",
+        )
+    return FormatMatch(
+        SubscriptionFormat.PLAINTEXT_LINK_LIST,
+        "every non-empty line starts with a supported URI scheme",
+        {
+            "lines": line_count,
+            "schemes": sorted(schemes),
+        },
+    )
+
+
 def _match_base64_link_list(text: str) -> FormatMatch | FormatCheck:
     decoded = _decode_base64_text(text)
     if decoded is None:
@@ -457,6 +511,7 @@ def classify_subscription_text(text: str) -> SubscriptionClassification:
         )
     payload, json_error = _probe_json(text)
     results: list[FormatMatch | FormatCheck] = [
+        _match_plaintext_link_list(text),
         _match_base64_link_list(text),
         _match_clash_yaml(text),
         _match_singbox_json(payload, json_error),
@@ -482,6 +537,30 @@ def _unrecognized_message(result: UnrecognizedFormat) -> str:
     return f"unrecognized subscription format ({reasons})"
 
 
+def _extract_plaintext_link_list(text: str) -> tuple[list[Profile], int]:
+    """Extract a strictly validated plain-text link list.
+
+    Each non-empty line is parsed by the shared ``parse_uri``. A line whose
+    prefix matched the signature but whose URI fails semantic or endpoint
+    validation rejects the whole response, so no partial profile set is ever
+    returned to the caller.
+    """
+    profiles: list[Profile] = []
+    for index, raw in enumerate(text.splitlines(), start=1):
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        try:
+            profiles.append(parse_uri(line))
+        except ParseError as exc:
+            raise ParseError(
+                f"invalid plain-text subscription URI on line {index}"
+            ) from exc
+    if not profiles:
+        raise ParseError("plain-text subscription contains no supported profiles")
+    return profiles, 0
+
+
 def _extract_base64_link_list(text: str) -> tuple[list[Profile], int]:
     decoded_lines = _decode_base64_lines(text)
     profiles: list[Profile] = []
@@ -501,6 +580,8 @@ def _extract_profiles(
     format: SubscriptionFormat, text: str
 ) -> tuple[list[Profile], int]:
     """Run the extractor for an already positively identified format."""
+    if format is SubscriptionFormat.PLAINTEXT_LINK_LIST:
+        return _extract_plaintext_link_list(text)
     if format is SubscriptionFormat.BASE64_LINK_LIST:
         return _extract_base64_link_list(text)
     if format is SubscriptionFormat.CLASH_YAML:

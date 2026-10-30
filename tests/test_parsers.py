@@ -1153,6 +1153,11 @@ class SubscriptionClassificationTests(unittest.TestCase):
     def test_each_supported_format_is_positively_identified(self) -> None:
         cases = (
             (
+                "plaintext",
+                "vless://uuid@plain.example.com:443?encryption=none",
+                SubscriptionFormat.PLAINTEXT_LINK_LIST,
+            ),
+            (
                 "base64",
                 self._base64("vless://uuid@base64.example.com:443?encryption=none"),
                 SubscriptionFormat.BASE64_LINK_LIST,
@@ -1312,6 +1317,127 @@ class SubscriptionClassificationTests(unittest.TestCase):
         self.assertEqual(profiles[0].config["host"], "valid.example.com")
         self.assertEqual(rejected, 1)
 
+    PLAINTEXT_LINKS = (
+        "vless://uuid@plain.example.com:443?encryption=none",
+        "trojan://secret@plain.example.com:443?security=tls",
+        "hy2://password@plain.example.com:443?sni=plain.example.com",
+    )
+
+    def test_plain_text_link_list_is_positively_identified_and_extracted(self) -> None:
+        payload = "\n".join(self.PLAINTEXT_LINKS)
+
+        result = classify_subscription_text(payload)
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.PLAINTEXT_LINK_LIST)
+        self.assertEqual(result.match.evidence["lines"], len(self.PLAINTEXT_LINKS))
+
+        profiles, rejected = _parse_profiles_detailed(payload)
+
+        self.assertEqual(rejected, 0)
+        self.assertEqual(
+            [profile.protocol for profile in profiles],
+            [ProtocolType.VLESS, ProtocolType.TROJAN, ProtocolType.HYSTERIA2],
+        )
+        self.assertEqual(
+            [profile.config["host"] for profile in profiles],
+            ["plain.example.com"] * len(self.PLAINTEXT_LINKS),
+        )
+
+    def test_plain_text_blank_lines_around_and_between_links_are_accepted(self) -> None:
+        payload = (
+            "\n"
+            "   \n"
+            f"{self.PLAINTEXT_LINKS[0]}\n"
+            "\n"
+            "\t\n"
+            f"{self.PLAINTEXT_LINKS[1]}\n"
+            "  \n"
+        )
+
+        result = classify_subscription_text(payload)
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.PLAINTEXT_LINK_LIST)
+        self.assertEqual(result.match.evidence["lines"], 2)
+        profiles, rejected = _parse_profiles_detailed(payload)
+        self.assertEqual(rejected, 0)
+        self.assertEqual(len(profiles), 2)
+
+    def test_plain_text_unrecognized_line_is_not_classified_and_names_only_its_line(self) -> None:
+        secret_marker = "TOKEN-SHOULD-NOT-LEAK"
+        payload = f"{self.PLAINTEXT_LINKS[0]}\n{secret_marker}\n"
+
+        result = classify_subscription_text(payload)
+
+        self.assertIsInstance(result, UnrecognizedFormat)
+        plaintext_checks = [
+            check
+            for check in result.checked
+            if check.format is SubscriptionFormat.PLAINTEXT_LINK_LIST
+        ]
+        self.assertEqual(len(plaintext_checks), 1)
+        self.assertIn("line 2", plaintext_checks[0].reason)
+        self.assertNotIn(secret_marker, plaintext_checks[0].reason)
+
+        with patch("parsers.subscription.parse_uri") as uri_extractor:
+            with self.assertRaises(ParseError) as captured:
+                _parse_profiles_detailed(payload)
+        uri_extractor.assert_not_called()
+        self.assertIn("line 2", str(captured.exception))
+        self.assertNotIn(secret_marker, str(captured.exception))
+
+    def test_plain_text_uri_failing_semantic_validation_fails_closed_with_line_number(self) -> None:
+        payload = f"{self.PLAINTEXT_LINKS[0]}\nvless://example.com\n"
+
+        self.assertIsInstance(classify_subscription_text(payload), IdentifiedFormat)
+
+        with self.assertRaises(ParseError) as captured:
+            _parse_profiles_detailed(payload)
+
+        self.assertIn("line 2", str(captured.exception))
+        self.assertNotIn("plain.example.com", str(captured.exception))
+
+        with patch(
+            "parsers.subscription.parse_uri",
+            side_effect=["first-profile", ParseError("invalid endpoint")],
+        ) as uri_extractor:
+            with self.assertRaisesRegex(ParseError, "line 2"):
+                _parse_profiles_detailed(payload)
+        self.assertEqual(uri_extractor.call_count, 2)
+
+    def test_empty_or_whitespace_only_plain_text_is_not_accepted(self) -> None:
+        cases = (("empty", ""), ("spaces", "   \n \t\n"))
+        for label, payload in cases:
+            with self.subTest(case=label):
+                result = classify_subscription_text(payload)
+                self.assertIsInstance(result, UnrecognizedFormat)
+                reasons = [
+                    check.reason
+                    for check in result.checked
+                    if check.format is SubscriptionFormat.PLAINTEXT_LINK_LIST
+                ]
+                self.assertEqual(len(reasons), 1)
+                self.assertIn("no non-empty lines", reasons[0])
+
+    def test_strict_plain_text_and_permissive_base64_are_asymmetric(self) -> None:
+        body = (
+            "vless://uuid@valid.example.com:443?encryption=none\n"
+            "not-a-supported-uri"
+        )
+
+        self.assertIsInstance(classify_subscription_text(body), UnrecognizedFormat)
+
+        encoded = self._base64(body)
+        result = classify_subscription_text(encoded)
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.BASE64_LINK_LIST)
+        profiles, rejected = _parse_profiles_detailed(encoded)
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].config["host"], "valid.example.com")
+        self.assertEqual(rejected, 1)
+
     def test_root_clash_yaml_section_is_still_identified_and_extracted(self) -> None:
         result = classify_subscription_text(self.CLASH_YAML)
 
@@ -1400,10 +1526,6 @@ class SubscriptionClassificationTests(unittest.TestCase):
 
     def test_future_format_signatures_are_not_accepted(self) -> None:
         cases = (
-            (
-                "plain_text",
-                "vless://uuid@plain.example.com:443?encryption=none",
-            ),
             (
                 "singbox_endpoints",
                 json.dumps(
