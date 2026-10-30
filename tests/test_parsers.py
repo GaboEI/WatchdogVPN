@@ -4,6 +4,7 @@ import base64
 import json
 import socket
 import unittest
+from contextlib import ExitStack
 from email.message import Message
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -28,7 +29,13 @@ from parsers.singbox_json import parse_singbox_json_detailed
 from parsers.subscription import (
     DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_SUBSCRIPTION_USER_AGENT,
+    AmbiguousFormat,
+    IdentifiedFormat,
+    SubscriptionFormat,
+    UnrecognizedFormat,
+    _parse_profiles_detailed,
     _parse_subscription_userinfo,
+    classify_subscription_text,
 )
 from models.profile import ProtocolType
 
@@ -1078,6 +1085,294 @@ class SubscriptionParserTests(unittest.TestCase):
         _mock_subscription_response(urlopen_mock, b"@@@")
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
+
+
+class SubscriptionClassificationTests(unittest.TestCase):
+    """Positive classify-then-extract contract for subscription payloads."""
+
+    CLASH_YAML = (
+        "proxies:\n"
+        "  - name: clash1\n"
+        "    type: trojan\n"
+        "    server: clash.example.com\n"
+        "    port: 443\n"
+        "    password: secret\n"
+    )
+    SINGBOX_JSON = json.dumps(
+        {
+            "outbounds": [
+                {
+                    "type": "vless",
+                    "tag": "sb1",
+                    "server": "sb.example.com",
+                    "server_port": 443,
+                    "uuid": "uuid-1",
+                }
+            ]
+        }
+    )
+    XRAY_ROOT_JSON = json.dumps(
+        {
+            "protocol": "vmess",
+            "tag": "xray-root",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "xray.example.com",
+                        "port": 443,
+                        "users": [{"id": "uuid-2"}],
+                    }
+                ]
+            },
+        }
+    )
+    XRAY_OUTBOUNDS_JSON = json.dumps(
+        {
+            "outbounds": [
+                {
+                    "protocol": "vmess",
+                    "tag": "xray-node",
+                    "settings": {
+                        "vnext": [
+                            {
+                                "address": "xray.example.com",
+                                "port": 443,
+                                "users": [{"id": "uuid-2"}],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    @staticmethod
+    def _base64(text: str) -> str:
+        return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+    def test_each_supported_format_is_positively_identified(self) -> None:
+        cases = (
+            (
+                "base64",
+                self._base64("vless://uuid@base64.example.com:443?encryption=none"),
+                SubscriptionFormat.BASE64_LINK_LIST,
+            ),
+            ("clash", self.CLASH_YAML, SubscriptionFormat.CLASH_YAML),
+            ("singbox", self.SINGBOX_JSON, SubscriptionFormat.SINGBOX_JSON),
+            ("xray_root", self.XRAY_ROOT_JSON, SubscriptionFormat.XRAY_JSON),
+            ("xray_outbounds", self.XRAY_OUTBOUNDS_JSON, SubscriptionFormat.XRAY_JSON),
+        )
+        for label, payload, expected_format in cases:
+            with self.subTest(format=label):
+                result = classify_subscription_text(payload)
+                self.assertIsInstance(result, IdentifiedFormat)
+                self.assertIs(result.match.format, expected_format)
+                self.assertTrue(result.match.signature)
+                self.assertTrue(result.match.evidence)
+
+    def test_identified_format_dispatches_only_to_its_extractor(self) -> None:
+        with ExitStack() as stack:
+            clash_extractor = stack.enter_context(
+                patch(
+                    "parsers.subscription.parse_clash_yaml_detailed",
+                    return_value=(["clash-profile"], 0),
+                )
+            )
+            json_extractor = stack.enter_context(
+                patch(
+                    "parsers.subscription.parse_singbox_json_detailed",
+                    return_value=(["json-profile"], 0),
+                )
+            )
+            uri_extractor = stack.enter_context(
+                patch("parsers.subscription.parse_uri", return_value="uri-profile")
+            )
+
+            self.assertEqual(
+                _parse_profiles_detailed(self.CLASH_YAML), (["clash-profile"], 0)
+            )
+            clash_extractor.assert_called_once_with(self.CLASH_YAML)
+            json_extractor.assert_not_called()
+
+            self.assertEqual(
+                _parse_profiles_detailed(self.SINGBOX_JSON), (["json-profile"], 0)
+            )
+            json_extractor.assert_called_once_with(self.SINGBOX_JSON)
+
+            self.assertEqual(
+                _parse_profiles_detailed(self.XRAY_ROOT_JSON), (["json-profile"], 0)
+            )
+            self.assertEqual(json_extractor.call_count, 2)
+            uri_extractor.assert_not_called()
+
+            profiles, rejected = _parse_profiles_detailed(
+                self._base64("vless://uuid@base64.example.com:443")
+            )
+            self.assertEqual((profiles, rejected), (["uri-profile"], 0))
+            uri_extractor.assert_called_once_with(
+                "vless://uuid@base64.example.com:443"
+            )
+
+    def test_classification_does_not_extract_or_build_profiles(self) -> None:
+        with ExitStack() as stack:
+            uri_extractor = stack.enter_context(
+                patch("parsers.subscription.parse_uri")
+            )
+            clash_extractor = stack.enter_context(
+                patch("parsers.subscription.parse_clash_yaml_detailed")
+            )
+            json_extractor = stack.enter_context(
+                patch("parsers.subscription.parse_singbox_json_detailed")
+            )
+            payloads = (
+                self._base64("vless://uuid@base64.example.com:443"),
+                self.CLASH_YAML,
+                self.SINGBOX_JSON,
+                self.XRAY_ROOT_JSON,
+            )
+            for payload in payloads:
+                result = classify_subscription_text(payload)
+                self.assertIsInstance(result, IdentifiedFormat)
+        uri_extractor.assert_not_called()
+        clash_extractor.assert_not_called()
+        json_extractor.assert_not_called()
+
+    def test_multiple_positive_signatures_are_explicit_ambiguity(self) -> None:
+        ambiguous_payload = json.dumps(
+            {
+                "outbounds": [
+                    {
+                        "type": "vless",
+                        "protocol": "vmess",
+                        "tag": "both",
+                        "server": "both.example.com",
+                        "server_port": 443,
+                        "uuid": "uuid-1",
+                    }
+                ]
+            }
+        )
+
+        result = classify_subscription_text(ambiguous_payload)
+
+        self.assertIsInstance(result, AmbiguousFormat)
+        self.assertEqual(
+            {match.format for match in result.matches},
+            {SubscriptionFormat.SINGBOX_JSON, SubscriptionFormat.XRAY_JSON},
+        )
+        with patch(
+            "parsers.subscription.parse_singbox_json_detailed"
+        ) as json_extractor:
+            with self.assertRaises(ParseError) as captured:
+                _parse_profiles_detailed(ambiguous_payload)
+        json_extractor.assert_not_called()
+        message = str(captured.exception)
+        self.assertIn("ambiguous", message)
+        self.assertIn(SubscriptionFormat.SINGBOX_JSON.value, message)
+        self.assertIn(SubscriptionFormat.XRAY_JSON.value, message)
+
+    def test_unrecognized_result_enumerates_checked_formats_and_reasons(self) -> None:
+        payload = "this body is not a subscription in any supported format"
+
+        result = classify_subscription_text(payload)
+
+        self.assertIsInstance(result, UnrecognizedFormat)
+        self.assertFalse(result.html_response)
+        checked = {check.format: check.reason for check in result.checked}
+        self.assertEqual(set(checked), set(SubscriptionFormat))
+        for fmt, reason in checked.items():
+            with self.subTest(format=fmt.value):
+                self.assertTrue(reason.strip())
+
+        with self.assertRaises(ParseError) as captured:
+            _parse_profiles_detailed(payload)
+        message = str(captured.exception)
+        for fmt in SubscriptionFormat:
+            with self.subTest(format=fmt.value):
+                self.assertIn(fmt.value, message)
+
+    def test_html_response_stays_a_controlled_rejection(self) -> None:
+        html_payload = "<!doctype html><html><body>login required</body></html>"
+
+        result = classify_subscription_text(html_payload)
+
+        self.assertIsInstance(result, UnrecognizedFormat)
+        self.assertTrue(result.html_response)
+        with self.assertRaisesRegex(ParseError, "looks like HTML"):
+            _parse_profiles_detailed(html_payload)
+
+    def test_base64_permissive_imports_valid_uri_and_counts_invalid_line(self) -> None:
+        payload = self._base64(
+            "vless://uuid@valid.example.com:443?encryption=none\nnot-a-supported-uri"
+        )
+
+        profiles, rejected = _parse_profiles_detailed(payload)
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].config["host"], "valid.example.com")
+        self.assertEqual(rejected, 1)
+
+    def test_existing_formats_keep_their_results_and_rejected_counts(self) -> None:
+        clash_with_unsupported = self.CLASH_YAML + (
+            "  - name: unsupported\n"
+            "    type: ssr\n"
+            "    server: legacy.example.com\n"
+            "    port: 443\n"
+        )
+        cases = (
+            ("clash", self.CLASH_YAML, 1, 0),
+            ("clash_with_unsupported", clash_with_unsupported, 1, 1),
+            ("singbox", self.SINGBOX_JSON, 1, 0),
+            ("xray_root", self.XRAY_ROOT_JSON, 1, 0),
+            ("xray_outbounds", self.XRAY_OUTBOUNDS_JSON, 1, 0),
+        )
+        for label, payload, expected_profiles, expected_rejected in cases:
+            with self.subTest(format=label):
+                profiles, rejected = _parse_profiles_detailed(payload)
+                self.assertEqual(len(profiles), expected_profiles)
+                self.assertEqual(rejected, expected_rejected)
+
+    def test_future_format_signatures_are_not_accepted(self) -> None:
+        cases = (
+            (
+                "plain_text",
+                "vless://uuid@plain.example.com:443?encryption=none",
+            ),
+            (
+                "singbox_endpoints",
+                json.dumps(
+                    {
+                        "endpoints": [
+                            {"type": "wireguard", "tag": "wg-endpoint", "address": "10.0.0.1"}
+                        ]
+                    }
+                ),
+            ),
+            ("xray_root_array", json.dumps([{"type": "vless", "tag": "array-node"}])),
+            (
+                "sip008",
+                json.dumps(
+                    {
+                        "version": 1,
+                        "servers": [
+                            {
+                                "server": "ss.example.com",
+                                "server_port": 8388,
+                                "password": "secret",
+                                "method": "aes-256-gcm",
+                            }
+                        ],
+                    }
+                ),
+            ),
+        )
+        for label, payload in cases:
+            with self.subTest(format=label):
+                self.assertIsInstance(
+                    classify_subscription_text(payload), UnrecognizedFormat
+                )
+                with self.assertRaises(ParseError):
+                    _parse_profiles_detailed(payload)
 
 
 class SubscriptionUserinfoTests(unittest.TestCase):

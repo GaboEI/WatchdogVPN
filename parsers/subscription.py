@@ -8,6 +8,7 @@ import socket
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 from models.profile import Profile
 from parsers.clash_yaml import parse_clash_yaml, parse_clash_yaml_detailed
 from parsers.singbox_json import parse_singbox_json, parse_singbox_json_detailed
-from parsers.uri import ParseError, parse_uri
+from parsers.uri import SUPPORTED_SCHEMES, ParseError, parse_uri
 
 DEFAULT_SUBSCRIPTION_USER_AGENT = (
     "WatchdogVPN/2.0 "
@@ -44,6 +45,58 @@ class SubscriptionFetchResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     rejected_profiles: int = 0
     user_agent: str = ""
+
+
+class SubscriptionFormat(str, Enum):
+    """Subscription formats this build can positively identify and extract."""
+
+    BASE64_LINK_LIST = "base64_link_list"
+    CLASH_YAML = "clash_yaml"
+    SINGBOX_JSON = "singbox_json"
+    XRAY_JSON = "xray_json"
+
+
+@dataclass(frozen=True, slots=True)
+class FormatMatch:
+    """A format positively identified by its own structural signature."""
+
+    format: SubscriptionFormat
+    signature: str
+    evidence: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class FormatCheck:
+    """A format that was examined and did not match its signature."""
+
+    format: SubscriptionFormat
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifiedFormat:
+    """Exactly one format matched; extraction may run for it."""
+
+    match: FormatMatch
+
+
+@dataclass(frozen=True, slots=True)
+class AmbiguousFormat:
+    """More than one positive signature matched; nothing is extracted."""
+
+    matches: tuple[FormatMatch, ...]
+    checked: tuple[FormatCheck, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UnrecognizedFormat:
+    """No positive signature matched; every checked format is reported."""
+
+    checked: tuple[FormatCheck, ...]
+    html_response: bool = False
+
+
+SubscriptionClassification = IdentifiedFormat | AmbiguousFormat | UnrecognizedFormat
 
 
 def _env_float(name: str, default: float) -> float:
@@ -205,11 +258,6 @@ def _fetch(url: str, *, user_agent: str) -> tuple[str, dict[str, str]]:
     return raw.decode("utf-8", errors="replace").strip(), headers
 
 
-def _looks_like_json(text: str) -> bool:
-    stripped = text.lstrip()
-    return stripped.startswith("{") or stripped.startswith("[")
-
-
 def _looks_like_html(text: str) -> bool:
     stripped = text.lstrip().lower()
     return (
@@ -220,73 +268,257 @@ def _looks_like_html(text: str) -> bool:
     )
 
 
-def _looks_like_yaml(text: str) -> bool:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        return ":" in stripped or stripped.startswith("- ")
-    return False
+def _probe_json(text: str) -> tuple[Any | None, str | None]:
+    """Parse candidate JSON for signature checking without raising.
+
+    Returns the decoded payload and ``None``, or ``None`` and the reason the
+    body is not usable JSON. Classification must report that reason instead of
+    turning it into an extractor failure for a format never actually matched.
+    """
+    stripped = text.lstrip()
+    if not stripped.startswith(("{", "[")):
+        return None, "payload is not a JSON object or array"
+    try:
+        return json.loads(text), None
+    except json.JSONDecodeError as exc:
+        return None, f"invalid JSON ({exc.msg} at line {exc.lineno} column {exc.colno})"
+
+
+def _decode_base64_text(text: str) -> str | None:
+    """Decode a base64 body to text, or return ``None`` when it is not base64."""
+    payload = text.replace("\n", "").replace("\r", "").strip()
+    if not payload:
+        return None
+    padding = "=" * (-len(payload) % 4)
+    for candidate in (payload, payload + padding):
+        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+            try:
+                if decoder is base64.b64decode:
+                    decoded = decoder(candidate.encode("utf-8"), validate=True).decode("utf-8")
+                else:
+                    decoded = decoder(candidate.encode("utf-8")).decode("utf-8")
+            except ValueError:
+                continue
+            if decoded.strip():
+                return decoded
+    return None
 
 
 def _decode_base64_lines(text: str) -> list[str]:
-    payload = text.replace("\n", "").replace("\r", "").strip()
-    if not payload:
-        raise ParseError("empty subscription response")
-    padding = "=" * (-len(payload) % 4)
-    for candidate in (payload, payload + padding):
-        try:
-            decoded = base64.b64decode(candidate.encode("utf-8"), validate=True).decode("utf-8")
-            break
-        except Exception:
-            try:
-                decoded = base64.urlsafe_b64decode(candidate.encode("utf-8")).decode("utf-8")
-                break
-            except Exception:
-                decoded = ""
-    if not decoded.strip():
+    decoded = _decode_base64_text(text)
+    if decoded is None:
         raise ParseError("invalid base64 subscription response")
     return [line.strip() for line in decoded.splitlines() if line.strip()]
 
 
-def _parse_profiles_detailed(text: str) -> tuple[list[Profile], int]:
+def _match_base64_link_list(text: str) -> FormatMatch | FormatCheck:
+    decoded = _decode_base64_text(text)
+    if decoded is None:
+        return FormatCheck(
+            SubscriptionFormat.BASE64_LINK_LIST,
+            "body does not decode as base64 text",
+        )
+    lines = [line.strip() for line in decoded.splitlines() if line.strip()]
+    if not lines:
+        return FormatCheck(
+            SubscriptionFormat.BASE64_LINK_LIST,
+            "decoded payload contains no supported profiles",
+        )
+    schemes = sorted(
+        {(urlparse(line).scheme or "").lower() for line in lines} & set(SUPPORTED_SCHEMES)
+    )
+    if not schemes:
+        return FormatCheck(
+            SubscriptionFormat.BASE64_LINK_LIST,
+            "decoded payload contains no supported profiles",
+        )
+    return FormatMatch(
+        SubscriptionFormat.BASE64_LINK_LIST,
+        "base64 body decoding to at least one supported URI line",
+        {
+            "encoding": "base64",
+            "decoded_lines": len(lines),
+            "supported_schemes": schemes,
+        },
+    )
+
+
+def _match_clash_yaml(text: str) -> FormatMatch | FormatCheck:
+    for index, raw in enumerate(text.splitlines()):
+        stripped = raw.strip()
+        if stripped.startswith("proxies:"):
+            return FormatMatch(
+                SubscriptionFormat.CLASH_YAML,
+                "top-level proxies: key",
+                {
+                    "key": "proxies",
+                    "line": index,
+                    "indent": len(raw) - len(raw.lstrip(" ")),
+                },
+            )
+    return FormatCheck(
+        SubscriptionFormat.CLASH_YAML,
+        "no top-level proxies: key",
+    )
+
+
+def _match_singbox_json(
+    payload: Any | None, json_error: str | None
+) -> FormatMatch | FormatCheck:
+    if json_error is not None:
+        return FormatCheck(SubscriptionFormat.SINGBOX_JSON, json_error)
+    if not isinstance(payload, dict):
+        return FormatCheck(SubscriptionFormat.SINGBOX_JSON, "root is not a JSON object")
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return FormatCheck(
+            SubscriptionFormat.SINGBOX_JSON,
+            "no outbounds array at the document root",
+        )
+    typed_entries = [
+        entry for entry in outbounds if isinstance(entry, dict) and "type" in entry
+    ]
+    if not typed_entries:
+        return FormatCheck(
+            SubscriptionFormat.SINGBOX_JSON,
+            "outbounds entries do not carry a type key",
+        )
+    return FormatMatch(
+        SubscriptionFormat.SINGBOX_JSON,
+        "outbounds array whose entries carry a type key",
+        {
+            "root": "object",
+            "array": "outbounds",
+            "entry_key": "type",
+            "matching_entries": len(typed_entries),
+            "total_entries": len(outbounds),
+        },
+    )
+
+
+def _match_xray_json(
+    payload: Any | None, json_error: str | None
+) -> FormatMatch | FormatCheck:
+    if json_error is not None:
+        return FormatCheck(SubscriptionFormat.XRAY_JSON, json_error)
+    if not isinstance(payload, dict):
+        return FormatCheck(SubscriptionFormat.XRAY_JSON, "root is not a JSON object")
+    if "protocol" in payload:
+        return FormatMatch(
+            SubscriptionFormat.XRAY_JSON,
+            "root object carrying a protocol key",
+            {"form": "root_outbound", "key": "protocol"},
+        )
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return FormatCheck(
+            SubscriptionFormat.XRAY_JSON,
+            "no protocol key at the document root and no outbounds array",
+        )
+    protocol_entries = [
+        entry for entry in outbounds if isinstance(entry, dict) and "protocol" in entry
+    ]
+    if not protocol_entries:
+        return FormatCheck(
+            SubscriptionFormat.XRAY_JSON,
+            "outbounds entries do not carry a protocol key",
+        )
+    return FormatMatch(
+        SubscriptionFormat.XRAY_JSON,
+        "outbounds array whose entries carry a protocol key",
+        {
+            "form": "outbounds_object",
+            "entry_key": "protocol",
+            "matching_entries": len(protocol_entries),
+            "total_entries": len(outbounds),
+        },
+    )
+
+
+_HTML_REJECTION_REASON = "not evaluated: the payload is an HTML document"
+
+
+def classify_subscription_text(text: str) -> SubscriptionClassification:
+    """Positively classify a subscription payload without extracting profiles.
+
+    Pure by contract: no network access, no state, and never a ``Profile``.
+    A format is identified only by its own structural signature; it is never
+    selected merely because every other format failed.
+    """
     if _looks_like_html(text):
-        raise ParseError("subscription response looks like HTML, not a VPN subscription")
-    if _looks_like_json(text):
-        # Structured candidates report the nodes they could not import, so an
-        # incomplete structured response is never ranked as if it were clean.
-        return parse_singbox_json_detailed(text)
-    if _looks_like_yaml(text):
+        return UnrecognizedFormat(
+            checked=tuple(
+                FormatCheck(fmt, _HTML_REJECTION_REASON) for fmt in SubscriptionFormat
+            ),
+            html_response=True,
+        )
+    payload, json_error = _probe_json(text)
+    results: list[FormatMatch | FormatCheck] = [
+        _match_base64_link_list(text),
+        _match_clash_yaml(text),
+        _match_singbox_json(payload, json_error),
+        _match_xray_json(payload, json_error),
+    ]
+    matches = tuple(result for result in results if isinstance(result, FormatMatch))
+    if len(matches) == 1:
+        return IdentifiedFormat(matches[0])
+    if matches:
+        checked = tuple(result for result in results if isinstance(result, FormatCheck))
+        return AmbiguousFormat(matches, checked)
+    return UnrecognizedFormat(
+        tuple(result for result in results if isinstance(result, FormatCheck))
+    )
+
+
+def _unrecognized_message(result: UnrecognizedFormat) -> str:
+    if result.html_response:
+        return "subscription response looks like HTML, not a VPN subscription"
+    reasons = "; ".join(
+        f"{check.format.value}: {check.reason}" for check in result.checked
+    )
+    return f"unrecognized subscription format ({reasons})"
+
+
+def _extract_base64_link_list(text: str) -> tuple[list[Profile], int]:
+    decoded_lines = _decode_base64_lines(text)
+    profiles: list[Profile] = []
+    parse_errors: list[str] = []
+    for line in decoded_lines:
+        try:
+            profiles.append(parse_uri(line))
+        except ParseError as exc:
+            parse_errors.append(str(exc))
+    if not profiles:
+        detail = f" ({'; '.join(parse_errors[:3])})" if parse_errors else ""
+        raise ParseError(f"subscription contains no supported profiles{detail}")
+    return profiles, len(parse_errors)
+
+
+def _extract_profiles(
+    format: SubscriptionFormat, text: str
+) -> tuple[list[Profile], int]:
+    """Run the extractor for an already positively identified format."""
+    if format is SubscriptionFormat.BASE64_LINK_LIST:
+        return _extract_base64_link_list(text)
+    if format is SubscriptionFormat.CLASH_YAML:
         return parse_clash_yaml_detailed(text)
+    if format in {SubscriptionFormat.SINGBOX_JSON, SubscriptionFormat.XRAY_JSON}:
+        # Both structured dialects are converted by the existing sing-box/Xray
+        # converter; this task does not change its behavior.
+        return parse_singbox_json_detailed(text)
+    raise ParseError(f"no extractor for subscription format: {format.value}")
 
-    try:
-        decoded_lines = _decode_base64_lines(text)
-    except ParseError:
-        decoded_lines = []
-    if decoded_lines:
-        profiles: list[Profile] = []
-        parse_errors: list[str] = []
-        for line in decoded_lines:
-            try:
-                profiles.append(parse_uri(line))
-            except ParseError as exc:
-                parse_errors.append(str(exc))
-        if not profiles:
-            detail = f" ({'; '.join(parse_errors[:3])})" if parse_errors else ""
-            raise ParseError(f"subscription contains no supported profiles{detail}")
-        return profiles, len(parse_errors)
 
-    if "outbounds" in text:
-        try:
-            return parse_singbox_json_detailed(text)
-        except ParseError:
-            pass
-    if "proxies" in text:
-        try:
-            return parse_clash_yaml_detailed(text)
-        except ParseError:
-            pass
-    raise ParseError("unsupported subscription format")
+def _parse_profiles_detailed(text: str) -> tuple[list[Profile], int]:
+    classification = classify_subscription_text(text)
+    if isinstance(classification, IdentifiedFormat):
+        return _extract_profiles(classification.match.format, text)
+    if isinstance(classification, AmbiguousFormat):
+        formats = ", ".join(match.format.value for match in classification.matches)
+        raise ParseError(
+            f"ambiguous subscription format: positive signatures for {formats}"
+        )
+    raise ParseError(_unrecognized_message(classification))
 
 
 def _parse_profiles(text: str) -> list[Profile]:
