@@ -44,6 +44,33 @@ export WATCHDOGVPN_SHARED_STATE_DIR="$TMP_DIR/shared-state"
 export WATCHDOGVPN_LEGACY_CONFIG_DIR="$TMP_DIR/legacy-state"
 mkdir -p "$WATCHDOGVPN_PREFLIGHT_ROOT"
 
+# Hermetic distro identity: this test exercises backend selection, not host
+# distro admission. Pinning a supported os-release keeps the preflight from
+# depending on whatever ubuntu-latest currently points at (GitHub moved the
+# label to Ubuntu 26.04, which the product correctly treats as experimental and
+# refuses before backend selection). It does not change product support policy.
+OS_RELEASE_FIXTURE="$TMP_DIR/os-release-ubuntu-24.04"
+cat >"$OS_RELEASE_FIXTURE" <<'OS_RELEASE'
+ID=ubuntu
+PRETTY_NAME="Ubuntu 24.04 LTS"
+VERSION_ID="24.04"
+VERSION_CODENAME=noble
+UBUNTU_CODENAME=noble
+OS_RELEASE
+export OS_RELEASE_FILE="$OS_RELEASE_FIXTURE"
+
+grep -qx 'ID=ubuntu' "$OS_RELEASE_FILE" || {
+  printf 'FAIL: hermetic os-release fixture was not created\n' >&2
+  exit 1
+}
+case "$OS_RELEASE_FILE" in
+  "$TMP_DIR"/*) ;;
+  *)
+    printf 'FAIL: OS_RELEASE_FILE must point inside TMP_DIR, got %s\n' "$OS_RELEASE_FILE" >&2
+    exit 1
+    ;;
+esac
+
 contains() {
   local haystack="$1" needle="$2"
   grep -Fq "$needle" <<<"$haystack"
@@ -72,6 +99,9 @@ grep -Fq 'sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFI
 fresh_yes_dir="$TMP_DIR/fresh-yes/etc/watchdogvpn"
 mkdir -p "$fresh_yes_dir"
 yes_output="$(WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_yes_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
+# The isolated fixture is authoritative: the run must report the pinned release,
+# so a future runner-image change cannot silently reintroduce host dependence.
+contains "$yes_output" "Ubuntu 24.04"
 contains "$yes_output" "Backend mode:"
 contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
