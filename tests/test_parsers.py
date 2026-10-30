@@ -1312,6 +1312,72 @@ class SubscriptionClassificationTests(unittest.TestCase):
         self.assertEqual(profiles[0].config["host"], "valid.example.com")
         self.assertEqual(rejected, 1)
 
+    def test_root_clash_yaml_section_is_still_identified_and_extracted(self) -> None:
+        result = classify_subscription_text(self.CLASH_YAML)
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.CLASH_YAML)
+
+        profiles, rejected = _parse_profiles_detailed(self.CLASH_YAML)
+
+        self.assertEqual(rejected, 0)
+        self.assertEqual([profile.name for profile in profiles], ["clash1"])
+        self.assertIs(profiles[0].protocol, ProtocolType.TROJAN)
+
+    def test_nested_proxies_key_is_not_a_clash_signature(self) -> None:
+        nested = (
+            "wrapper:\n"
+            "  proxies:\n"
+            "    - name: nested\n"
+            "      type: vless\n"
+            "      server: nested.example.com\n"
+            "      port: 443\n"
+            "      uuid: u\n"
+        )
+
+        self.assertIsInstance(classify_subscription_text(nested), UnrecognizedFormat)
+        with patch(
+            "parsers.subscription.parse_clash_yaml_detailed"
+        ) as clash_extractor:
+            with self.assertRaises(ParseError):
+                _parse_profiles_detailed(nested)
+        clash_extractor.assert_not_called()
+
+    def test_proxies_lookalike_and_inline_values_are_not_clash_signatures(self) -> None:
+        cases = (
+            ("lookalike_key", "proxies:evil\n  - name: evil\n    type: vless\n"),
+            ("inline_empty_list", "proxies: []\n"),
+            ("inline_comment", "proxies: # nodes\n  - name: a\n    type: vless\n"),
+        )
+        for label, payload in cases:
+            with self.subTest(case=label):
+                self.assertIsInstance(
+                    classify_subscription_text(payload), UnrecognizedFormat
+                )
+                with patch(
+                    "parsers.subscription.parse_clash_yaml_detailed"
+                ) as clash_extractor:
+                    with self.assertRaises(ParseError):
+                        _parse_profiles_detailed(payload)
+                clash_extractor.assert_not_called()
+
+    def test_indented_proxies_key_is_not_a_clash_signature(self) -> None:
+        cases = (
+            ("spaces", "  proxies:\n    - name: a\n      type: vless\n"),
+            ("tab", "\tproxies:\n\t\t- name: a\n"),
+        )
+        for label, payload in cases:
+            with self.subTest(indent=label):
+                self.assertIsInstance(
+                    classify_subscription_text(payload), UnrecognizedFormat
+                )
+                with patch(
+                    "parsers.subscription.parse_clash_yaml_detailed"
+                ) as clash_extractor:
+                    with self.assertRaises(ParseError):
+                        _parse_profiles_detailed(payload)
+                clash_extractor.assert_not_called()
+
     def test_existing_formats_keep_their_results_and_rejected_counts(self) -> None:
         clash_with_unsupported = self.CLASH_YAML + (
             "  - name: unsupported\n"

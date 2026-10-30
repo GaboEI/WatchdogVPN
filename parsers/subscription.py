@@ -345,20 +345,23 @@ def _match_base64_link_list(text: str) -> FormatMatch | FormatCheck:
 
 def _match_clash_yaml(text: str) -> FormatMatch | FormatCheck:
     for index, raw in enumerate(text.splitlines()):
-        stripped = raw.strip()
-        if stripped.startswith("proxies:"):
-            return FormatMatch(
-                SubscriptionFormat.CLASH_YAML,
-                "top-level proxies: key",
-                {
-                    "key": "proxies",
-                    "line": index,
-                    "indent": len(raw) - len(raw.lstrip(" ")),
-                },
-            )
+        if raw != raw.lstrip():
+            # An indented line can never be the document-level proxies section,
+            # even when the extractor would tolerate it.
+            continue
+        if raw.rstrip() != "proxies:":
+            # Reject look-alike keys (proxies:evil) and any inline value or
+            # comment (proxies: [], proxies: # nodes): only the bare section
+            # key is the positive Clash signature.
+            continue
+        return FormatMatch(
+            SubscriptionFormat.CLASH_YAML,
+            "root-level proxies: section key",
+            {"key": "proxies", "line": index, "indent": 0},
+        )
     return FormatCheck(
         SubscriptionFormat.CLASH_YAML,
-        "no top-level proxies: key",
+        "no root-level proxies: section key",
     )
 
 
