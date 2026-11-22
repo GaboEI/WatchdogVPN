@@ -25,25 +25,73 @@ _TYPE_TO_PROTOCOL: dict[str, ProtocolType] = {
 }
 
 
-def _load_json(data: str | dict[str, Any]) -> dict[str, Any]:
-    if isinstance(data, dict):
+# Root arrays of a sing-box object that carry node entries. The order is the
+# deterministic extraction order: ``outbounds`` first, then ``endpoints``.
+SINGBOX_NODE_ARRAYS = ("outbounds", "endpoints")
+
+
+def _load_json(data: str | dict[str, Any] | list[Any]) -> dict[str, Any] | list[Any]:
+    if isinstance(data, (dict, list)):
         return data
     try:
         payload = json.loads(data)
     except json.JSONDecodeError as exc:
         raise ParseError("invalid sing-box JSON") from exc
-    if not isinstance(payload, dict):
-        raise ParseError("sing-box JSON must be an object")
+    if not isinstance(payload, (dict, list)):
+        raise ParseError("sing-box JSON must be an object or an array")
     return payload
 
 
 def _coerce_outbounds(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    outbounds = payload.get("outbounds")
-    if outbounds is None:
+    """Collect node entries from ``outbounds`` and ``endpoints`` in that order.
+
+    When both arrays are present their entries are combined rather than one
+    being preferred. A payload carrying neither is a single bare outbound.
+    """
+    present = [
+        (key, payload[key])
+        for key in SINGBOX_NODE_ARRAYS
+        if payload.get(key) is not None
+    ]
+    if not present:
         return [payload]
-    if not isinstance(outbounds, list):
-        raise ParseError("sing-box outbounds must be a list")
-    return [outbound for outbound in outbounds if isinstance(outbound, dict)]
+    entries: list[dict[str, Any]] = []
+    for key, value in present:
+        if not isinstance(value, list):
+            raise ParseError(f"sing-box {key} must be a list")
+        entries.extend(entry for entry in value if isinstance(entry, dict))
+    return entries
+
+
+def _coerce_xray_array(payload: list[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Flatten a root-level Xray JSON array into outbound objects.
+
+    Each element is read according to its own shape, so one array may mix them:
+    an object carrying ``outbounds`` contributes the objects of that list, and
+    an object carrying ``protocol`` is a single bare outbound. Element order and
+    the order of derived outbounds are preserved. Elements that match neither
+    shape, and non-object entries inside an element's ``outbounds`` list, are
+    returned as a skipped count instead of being dropped silently.
+    """
+    entries: list[dict[str, Any]] = []
+    skipped = 0
+    for element in payload:
+        if not isinstance(element, dict):
+            skipped += 1
+        elif element.get("outbounds") is not None:
+            outbounds = element["outbounds"]
+            if not isinstance(outbounds, list):
+                raise ParseError("Xray JSON array element outbounds must be a list")
+            for outbound in outbounds:
+                if isinstance(outbound, dict):
+                    entries.append(outbound)
+                else:
+                    skipped += 1
+        elif "protocol" in element:
+            entries.append(element)
+        else:
+            skipped += 1
+    return entries, skipped
 
 
 def _profile_name(outbound: dict[str, Any], protocol: ProtocolType) -> str:
@@ -157,7 +205,7 @@ def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
     )
 
 
-def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
+def parse_singbox_json(data: str | dict[str, Any] | list[Any]) -> list[Profile]:
     profiles, _skipped_nodes = parse_singbox_json_detailed(data)
     return profiles
 
@@ -177,32 +225,54 @@ def _is_control_outbound(outbound: dict[str, Any]) -> bool:
 
 
 def _count_malformed_outbounds(payload: dict[str, Any]) -> int:
-    """Entries of the ``outbounds`` list that are not objects.
+    """Entries of the ``outbounds`` and ``endpoints`` lists that are not objects.
 
     ``_coerce_outbounds`` drops them, so they must be counted here: a response
     that mixes nodes with malformed entries is incomplete and must not be
     ranked as a complete, clean candidate.
     """
-    outbounds = payload.get("outbounds")
-    if not isinstance(outbounds, list):
-        return 0
-    return sum(1 for outbound in outbounds if not isinstance(outbound, dict))
+    malformed = 0
+    for key in SINGBOX_NODE_ARRAYS:
+        entries = payload.get(key)
+        if isinstance(entries, list):
+            malformed += sum(1 for entry in entries if not isinstance(entry, dict))
+    return malformed
 
 
-def parse_singbox_json_detailed(data: str | dict[str, Any]) -> tuple[list[Profile], int]:
-    """Parse sing-box JSON and report nodes that could not be imported.
+def parse_singbox_json_detailed(
+    data: str | dict[str, Any] | list[Any],
+) -> tuple[list[Profile], int]:
+    """Parse sing-box or Xray JSON and report nodes that could not be imported.
 
     A recognized sing-box control-flow outbound is not a remote node and is
     excluded from incompleteness. Every other outbound object that does not
     yield an importable profile is counted so a structured candidate is never
     treated as a complete, clean response while entries were silently skipped.
-    Malformed (non-object) ``outbounds`` entries are counted too.
+    Malformed (non-object) ``outbounds`` and ``endpoints`` entries are counted
+    too. A sing-box object may carry both arrays; ``endpoints`` entries go
+    through exactly the same conversion and validation as ``outbounds`` entries.
+
+    A root-level JSON array is the Xray array form. Its elements are read by
+    ``_coerce_xray_array`` and converted with the Xray converter only: a root
+    array of sing-box ``type`` objects is not a supported form and yields no
+    profile.
     """
     payload = _load_json(data)
+    if isinstance(payload, list):
+        outbounds, skipped_nodes = _coerce_xray_array(payload)
+        builders = (_build_v2ray_profile,)
+        empty_message = "Xray JSON array contains no supported profiles"
+    else:
+        outbounds = _coerce_outbounds(payload)
+        skipped_nodes = _count_malformed_outbounds(payload)
+        builders = (_build_profile, _build_v2ray_profile)
+        empty_message = "sing-box JSON contains no supported profiles"
     profiles: list[Profile] = []
-    skipped_nodes = _count_malformed_outbounds(payload)
-    for outbound in _coerce_outbounds(payload):
-        profile = _build_profile(outbound) or _build_v2ray_profile(outbound)
+    for outbound in outbounds:
+        profile = next(
+            (built for build in builders if (built := build(outbound)) is not None),
+            None,
+        )
         if profile is None:
             if not _is_control_outbound(outbound):
                 skipped_nodes += 1
@@ -214,5 +284,5 @@ def parse_singbox_json_detailed(data: str | dict[str, Any]) -> tuple[list[Profil
             raise ParseError(str(exc)) from exc
         profiles.append(profile)
     if not profiles:
-        raise ParseError("sing-box JSON contains no supported profiles")
+        raise ParseError(empty_message)
     return profiles, skipped_nodes

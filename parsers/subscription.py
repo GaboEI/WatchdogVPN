@@ -16,7 +16,11 @@ from urllib.request import Request, urlopen
 
 from models.profile import Profile
 from parsers.clash_yaml import parse_clash_yaml, parse_clash_yaml_detailed
-from parsers.singbox_json import parse_singbox_json, parse_singbox_json_detailed
+from parsers.singbox_json import (
+    SINGBOX_NODE_ARRAYS,
+    parse_singbox_json,
+    parse_singbox_json_detailed,
+)
 from parsers.uri import SUPPORTED_SCHEMES, ParseError, parse_uri
 
 DEFAULT_SUBSCRIPTION_USER_AGENT = (
@@ -426,29 +430,35 @@ def _match_singbox_json(
         return FormatCheck(SubscriptionFormat.SINGBOX_JSON, json_error)
     if not isinstance(payload, dict):
         return FormatCheck(SubscriptionFormat.SINGBOX_JSON, "root is not a JSON object")
-    outbounds = payload.get("outbounds")
-    if not isinstance(outbounds, list):
+    arrays = {
+        key: payload[key]
+        for key in SINGBOX_NODE_ARRAYS
+        if isinstance(payload.get(key), list)
+    }
+    if not arrays:
         return FormatCheck(
             SubscriptionFormat.SINGBOX_JSON,
-            "no outbounds array at the document root",
+            "no outbounds or endpoints array at the document root",
         )
-    typed_entries = [
-        entry for entry in outbounds if isinstance(entry, dict) and "type" in entry
-    ]
-    if not typed_entries:
+    typed_by_array = {
+        key: sum(1 for entry in entries if isinstance(entry, dict) and "type" in entry)
+        for key, entries in arrays.items()
+    }
+    typed_arrays = [key for key, count in typed_by_array.items() if count]
+    if not typed_arrays:
         return FormatCheck(
             SubscriptionFormat.SINGBOX_JSON,
-            "outbounds entries do not carry a type key",
+            "outbounds and endpoints entries do not carry a type key",
         )
     return FormatMatch(
         SubscriptionFormat.SINGBOX_JSON,
-        "outbounds array whose entries carry a type key",
+        "outbounds or endpoints array whose entries carry a type key",
         {
             "root": "object",
-            "array": "outbounds",
+            "arrays": typed_arrays,
             "entry_key": "type",
-            "matching_entries": len(typed_entries),
-            "total_entries": len(outbounds),
+            "matching_entries": sum(typed_by_array.values()),
+            "total_entries": sum(len(entries) for entries in arrays.values()),
         },
     )
 
@@ -458,8 +468,18 @@ def _match_xray_json(
 ) -> FormatMatch | FormatCheck:
     if json_error is not None:
         return FormatCheck(SubscriptionFormat.XRAY_JSON, json_error)
+    if isinstance(payload, list):
+        # The root array is itself the signature: unlike every other format it
+        # requires no particular key.
+        return FormatMatch(
+            SubscriptionFormat.XRAY_JSON,
+            "root JSON array",
+            {"form": "root_array", "elements": len(payload)},
+        )
     if not isinstance(payload, dict):
-        return FormatCheck(SubscriptionFormat.XRAY_JSON, "root is not a JSON object")
+        return FormatCheck(
+            SubscriptionFormat.XRAY_JSON, "root is not a JSON object or array"
+        )
     if "protocol" in payload:
         return FormatMatch(
             SubscriptionFormat.XRAY_JSON,
@@ -587,8 +607,9 @@ def _extract_profiles(
     if format is SubscriptionFormat.CLASH_YAML:
         return parse_clash_yaml_detailed(text)
     if format in {SubscriptionFormat.SINGBOX_JSON, SubscriptionFormat.XRAY_JSON}:
-        # Both structured dialects are converted by the existing sing-box/Xray
-        # converter; this task does not change its behavior.
+        # Both structured dialects share one converter: the sing-box object
+        # form (outbounds and endpoints) and the Xray object and root-array
+        # forms are all read by ``parse_singbox_json_detailed``.
         return parse_singbox_json_detailed(text)
     raise ParseError(f"no extractor for subscription format: {format.value}")
 

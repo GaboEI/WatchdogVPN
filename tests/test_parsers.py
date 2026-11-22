@@ -1525,18 +1525,9 @@ class SubscriptionClassificationTests(unittest.TestCase):
                 self.assertEqual(rejected, expected_rejected)
 
     def test_future_format_signatures_are_not_accepted(self) -> None:
+        # sing-box ``endpoints`` and root-level Xray arrays became supported in
+        # Task 23.7.6.3; Shadowsocks SIP008 stays unsupported until Task 23.7.6.4.
         cases = (
-            (
-                "singbox_endpoints",
-                json.dumps(
-                    {
-                        "endpoints": [
-                            {"type": "wireguard", "tag": "wg-endpoint", "address": "10.0.0.1"}
-                        ]
-                    }
-                ),
-            ),
-            ("xray_root_array", json.dumps([{"type": "vless", "tag": "array-node"}])),
             (
                 "sip008",
                 json.dumps(
@@ -1561,6 +1552,512 @@ class SubscriptionClassificationTests(unittest.TestCase):
                 )
                 with self.assertRaises(ParseError):
                     _parse_profiles_detailed(payload)
+
+
+class SingboxEndpointsAndXrayArrayTests(unittest.TestCase):
+    """Task 23.7.6.3: sing-box ``endpoints`` and root-level Xray JSON arrays."""
+
+    @staticmethod
+    def _singbox_node(tag: str, host: str, kind: str = "vless") -> dict:
+        node = {"type": kind, "tag": tag, "server": host, "server_port": 443}
+        if kind == "vless":
+            node["uuid"] = f"uuid-{tag}"
+        elif kind == "trojan":
+            node["password"] = f"secret-{tag}"
+        return node
+
+    @staticmethod
+    def _wireguard_endpoint(tag: str, host: str) -> dict:
+        return {
+            "type": "wireguard",
+            "tag": tag,
+            "server": host,
+            "server_port": 51820,
+            "private_key": f"private-{tag}",
+            "public_key": f"public-{tag}",
+        }
+
+    @staticmethod
+    def _xray_outbound(tag: str, host: str) -> dict:
+        return {
+            "protocol": "vmess",
+            "tag": tag,
+            "settings": {
+                "vnext": [
+                    {"address": host, "port": 443, "users": [{"id": f"uuid-{tag}"}]}
+                ]
+            },
+        }
+
+    def _names(self, payload) -> tuple[list[str], int]:
+        profiles, rejected = _parse_profiles_detailed(json.dumps(payload))
+        return [profile.name for profile in profiles], rejected
+
+    @staticmethod
+    def _converted(profile) -> tuple:
+        # Everything the converter derives, without the creation timestamps.
+        return (profile.id, profile.name, profile.protocol, profile.config, profile.source)
+
+    # 1 / 5 -- endpoints only: classification and extraction.
+    def test_endpoints_only_object_is_classified_as_singbox_and_extracted(self) -> None:
+        payload = {
+            "endpoints": [
+                self._wireguard_endpoint("wg-1", "wg1.example.com"),
+                self._singbox_node("tr-1", "tr1.example.com", "trojan"),
+            ]
+        }
+
+        result = classify_subscription_text(json.dumps(payload))
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.SINGBOX_JSON)
+        self.assertEqual(result.match.evidence["arrays"], ["endpoints"])
+        profiles, rejected = _parse_profiles_detailed(json.dumps(payload))
+        self.assertEqual(
+            [(profile.name, profile.protocol) for profile in profiles],
+            [("wg-1", ProtocolType.WIREGUARD), ("tr-1", ProtocolType.TROJAN)],
+        )
+        self.assertEqual(rejected, 0)
+
+    def test_endpoints_without_typed_entries_are_not_a_singbox_signature(self) -> None:
+        cases = (
+            ("untyped entries", {"endpoints": [{"tag": "x", "server": "x.example.com"}]}),
+            ("not a list", {"endpoints": {"type": "wireguard"}}),
+            ("empty list", {"endpoints": []}),
+        )
+        for label, payload in cases:
+            with self.subTest(case=label):
+                result = classify_subscription_text(json.dumps(payload))
+                self.assertIsInstance(result, UnrecognizedFormat)
+                with self.assertRaises(ParseError):
+                    _parse_profiles_detailed(json.dumps(payload))
+
+    # 2 -- outbounds and endpoints combined, deterministic order.
+    def test_outbounds_and_endpoints_are_combined_outbounds_first(self) -> None:
+        # ``endpoints`` is written first in the document on purpose: the order
+        # is the contract (outbounds, then endpoints), not the key order.
+        payload = {
+            "endpoints": [
+                self._wireguard_endpoint("wg-1", "wg1.example.com"),
+                self._wireguard_endpoint("wg-2", "wg2.example.com"),
+            ],
+            "outbounds": [
+                self._singbox_node("vl-1", "vl1.example.com"),
+                {"type": "direct", "tag": "direct"},
+                self._singbox_node("tr-1", "tr1.example.com", "trojan"),
+            ],
+        }
+
+        result = classify_subscription_text(json.dumps(payload))
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.SINGBOX_JSON)
+        self.assertEqual(result.match.evidence["arrays"], ["outbounds", "endpoints"])
+        self.assertEqual(
+            self._names(payload),
+            (["vl-1", "tr-1", "wg-1", "wg-2"], 0),
+        )
+
+    def test_neither_array_is_discarded_when_the_other_has_no_importable_node(self) -> None:
+        only_control_outbounds = {
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+            "endpoints": [self._wireguard_endpoint("wg-1", "wg1.example.com")],
+        }
+        only_unusable_endpoints = {
+            "outbounds": [self._singbox_node("vl-1", "vl1.example.com")],
+            "endpoints": [{"type": "tailscale", "tag": "ts"}],
+        }
+
+        self.assertEqual(self._names(only_control_outbounds), (["wg-1"], 0))
+        self.assertEqual(self._names(only_unusable_endpoints), (["vl-1"], 1))
+
+    def test_non_list_array_in_a_combined_object_fails_closed(self) -> None:
+        for key in ("outbounds", "endpoints"):
+            with self.subTest(array=key):
+                payload = {
+                    "outbounds": [self._singbox_node("vl-1", "vl1.example.com")],
+                    "endpoints": [self._wireguard_endpoint("wg-1", "wg1.example.com")],
+                }
+                payload[key] = {"type": "vless"}
+                with self.assertRaises(ParseError):
+                    parse_singbox_json_detailed(json.dumps(payload))
+
+    # 3 -- an endpoint entry is never hidden as a clean candidate.
+    def test_endpoint_entries_follow_the_same_semantics_as_outbound_entries(self) -> None:
+        good = self._singbox_node("good", "good.example.com")
+        cases = (
+            ("unsupported type", {"type": "tailscale", "tag": "ts"}, 1),
+            ("unknown tag only", {"tag": "mystery"}, 1),
+            ("empty object", {}, 1),
+            ("non-object entry", "malformed-node", 1),
+            ("direct control", {"type": "direct", "tag": "direct"}, 0),
+            ("selector control", {"type": "selector", "tag": "sel", "outbounds": ["a"]}, 0),
+            ("valid node", self._singbox_node("extra", "extra.example.com"), 0),
+        )
+        for label, entry, expected_skipped in cases:
+            with self.subTest(entry=label):
+                via_outbounds = parse_singbox_json_detailed(
+                    json.dumps({"outbounds": [good, entry]})
+                )
+                via_endpoints = parse_singbox_json_detailed(
+                    json.dumps({"outbounds": [good], "endpoints": [entry]})
+                )
+                self.assertEqual(via_outbounds[1], expected_skipped)
+                self.assertEqual(via_endpoints[1], expected_skipped)
+                self.assertEqual(
+                    [p.name for p in via_endpoints[0]],
+                    [p.name for p in via_outbounds[0]],
+                )
+
+    def test_identical_entry_converts_identically_in_outbounds_and_endpoints(self) -> None:
+        entry = self._wireguard_endpoint("wg-1", "wg1.example.com")
+
+        (from_outbounds,), _ = parse_singbox_json_detailed({"outbounds": [entry]})
+        (from_endpoints,), _ = parse_singbox_json_detailed({"endpoints": [entry]})
+
+        self.assertEqual(self._converted(from_endpoints), self._converted(from_outbounds))
+
+    @patch("parsers.subscription._fetch")
+    def test_incomplete_endpoints_candidate_is_reported_and_not_ranked_clean(
+        self, fetch_mock
+    ) -> None:
+        incomplete = json.dumps(
+            {
+                "outbounds": [self._singbox_node("vl-1", "vl1.example.com")],
+                "endpoints": [
+                    self._wireguard_endpoint("wg-1", "wg1.example.com"),
+                    {"type": "tailscale", "tag": "ts"},
+                ],
+            }
+        )
+        base64_clean_tie = base64.b64encode(
+            b"vless://uuid-a@a.example.com:443?encryption=none\n"
+            b"vless://uuid-b@b.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return incomplete, {}
+            if user_agent == "Karing":
+                return base64_clean_tie, {}
+            raise ParseError("subscription request rejected with HTTP status 403")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        # Both candidates accept two profiles; the incomplete structured one
+        # reports its skipped endpoint and therefore loses the tie.
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.rejected_profiles, 0)
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(_parse_profiles_detailed(incomplete)[1], 1)
+
+    # 4 -- an outbounds-only sing-box object keeps its behavior and counts.
+    def test_outbounds_only_singbox_keeps_behavior_and_counts(self) -> None:
+        payload = {
+            "outbounds": [
+                self._singbox_node("a", "a.example.com"),
+                self._singbox_node("b", "b.example.com", "trojan"),
+                {"type": "ssr", "tag": "c", "server": "c.example.com", "server_port": 443},
+                {"type": "direct", "tag": "direct"},
+                "malformed-node",
+            ]
+        }
+
+        result = classify_subscription_text(json.dumps(payload))
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.SINGBOX_JSON)
+        self.assertEqual(result.match.evidence["arrays"], ["outbounds"])
+        self.assertEqual(self._names(payload), (["a", "b"], 2))
+
+    def test_typed_endpoints_beside_xray_outbounds_are_explicit_ambiguity(self) -> None:
+        payload = {
+            "outbounds": [self._xray_outbound("xr-1", "xr1.example.com")],
+            "endpoints": [self._wireguard_endpoint("wg-1", "wg1.example.com")],
+        }
+
+        result = classify_subscription_text(json.dumps(payload))
+
+        self.assertIsInstance(result, AmbiguousFormat)
+        self.assertEqual(
+            {match.format for match in result.matches},
+            {SubscriptionFormat.SINGBOX_JSON, SubscriptionFormat.XRAY_JSON},
+        )
+        with patch("parsers.subscription.parse_singbox_json_detailed") as extractor:
+            with self.assertRaisesRegex(ParseError, "ambiguous"):
+                _parse_profiles_detailed(json.dumps(payload))
+        extractor.assert_not_called()
+
+    # 6 -- a root JSON array is positively Xray, with no required key.
+    def test_root_json_array_is_classified_as_xray_without_a_required_key(self) -> None:
+        payloads = (
+            [self._xray_outbound("xr-1", "xr1.example.com")],
+            [{"outbounds": [self._xray_outbound("xr-1", "xr1.example.com")]}],
+            [{"unrelated": 1}],
+            ["not-an-object"],
+            [],
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                result = classify_subscription_text(json.dumps(payload))
+                self.assertIsInstance(result, IdentifiedFormat)
+                self.assertIs(result.match.format, SubscriptionFormat.XRAY_JSON)
+                self.assertEqual(result.match.evidence["form"], "root_array")
+
+    def test_root_json_array_dispatches_to_the_structured_extractor_only(self) -> None:
+        text = json.dumps([self._xray_outbound("xr-1", "xr1.example.com")])
+        with ExitStack() as stack:
+            json_extractor = stack.enter_context(
+                patch(
+                    "parsers.subscription.parse_singbox_json_detailed",
+                    return_value=(["json-profile"], 0),
+                )
+            )
+            clash_extractor = stack.enter_context(
+                patch("parsers.subscription.parse_clash_yaml_detailed")
+            )
+            uri_extractor = stack.enter_context(patch("parsers.subscription.parse_uri"))
+            self.assertEqual(_parse_profiles_detailed(text), (["json-profile"], 0))
+        json_extractor.assert_called_once_with(text)
+        clash_extractor.assert_not_called()
+        uri_extractor.assert_not_called()
+
+    # 7 -- mixed element shapes in one root array.
+    def test_root_xray_array_mixes_outbounds_objects_and_bare_outbounds(self) -> None:
+        payload = [
+            {
+                "outbounds": [
+                    self._xray_outbound("xr-1", "xr1.example.com"),
+                    self._xray_outbound("xr-2", "xr2.example.com"),
+                ]
+            },
+            self._xray_outbound("xr-3", "xr3.example.com"),
+            {"outbounds": [self._xray_outbound("xr-4", "xr4.example.com")]},
+            self._xray_outbound("xr-5", "xr5.example.com"),
+        ]
+
+        self.assertEqual(
+            self._names(payload),
+            (["xr-1", "xr-2", "xr-3", "xr-4", "xr-5"], 0),
+        )
+
+    def test_root_xray_array_converts_like_the_existing_xray_object_forms(self) -> None:
+        outbound = self._xray_outbound("xr-1", "xr1.example.com")
+        (from_object,), _ = _parse_profiles_detailed(json.dumps({"outbounds": [outbound]}))
+        (from_bare,), _ = _parse_profiles_detailed(json.dumps(outbound))
+        (from_array_bare,), _ = _parse_profiles_detailed(json.dumps([outbound]))
+        (from_array_object,), _ = _parse_profiles_detailed(
+            json.dumps([{"outbounds": [outbound]}])
+        )
+
+        self.assertEqual(self._converted(from_array_bare), self._converted(from_object))
+        self.assertEqual(self._converted(from_array_object), self._converted(from_object))
+        self.assertEqual(self._converted(from_array_bare), self._converted(from_bare))
+
+    def test_root_xray_array_counts_skipped_elements_instead_of_hiding_them(self) -> None:
+        payload = [
+            self._xray_outbound("xr-1", "xr1.example.com"),
+            {"unrelated": True},
+            "not-an-object",
+            {"outbounds": [self._xray_outbound("xr-2", "xr2.example.com"), "bad"]},
+            {"protocol": "freedom", "tag": "direct"},
+        ]
+
+        # Skipped: the unrelated element, the string element, the non-object
+        # inside an element's outbounds, and the Xray ``freedom`` outbound,
+        # which the converter already counted for the object form.
+        self.assertEqual(self._names(payload), (["xr-1", "xr-2"], 4))
+
+    # 8 -- an array without any importable profile fails in a controlled way.
+    def test_root_array_without_importable_profiles_fails_in_a_controlled_way(self) -> None:
+        payloads = (
+            [],
+            ["not-an-object"],
+            [{"unrelated": True}],
+            [{"outbounds": []}],
+            [{"outbounds": [{"protocol": "freedom"}]}],
+            [{"protocol": "ssr", "tag": "unsupported"}],
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ParseError, "Xray JSON array contains no supported"):
+                    _parse_profiles_detailed(json.dumps(payload))
+
+    def test_root_array_element_with_non_list_outbounds_fails_closed(self) -> None:
+        payload = [
+            self._xray_outbound("xr-1", "xr1.example.com"),
+            {"outbounds": {"protocol": "vmess"}},
+        ]
+
+        with self.assertRaises(ParseError):
+            _parse_profiles_detailed(json.dumps(payload))
+
+    # 9 -- hostile or semantically invalid structured entries still fail safely.
+    def test_invalid_structured_entries_fail_the_whole_response(self) -> None:
+        good_xray = self._xray_outbound("xr-good", "xr-good.example.com")
+        bad_port = self._xray_outbound("xr-bad", "xr-bad.example.com")
+        bad_port["settings"]["vnext"][0]["port"] = 70000
+        loopback = self._xray_outbound("xr-loop", "127.0.0.1")
+        no_uuid = self._xray_outbound("xr-nouuid", "xr-nouuid.example.com")
+        no_uuid["settings"]["vnext"][0]["users"] = [{}]
+        wg_no_key = self._wireguard_endpoint("wg-bad", "wg.example.com")
+        del wg_no_key["private_key"]
+        wg_loopback = self._wireguard_endpoint("wg-loop", "127.0.0.1")
+        good_node = self._singbox_node("good", "good.example.com")
+        cases = (
+            ("xray array bare, bad port", [good_xray, bad_port]),
+            ("xray array bare, loopback host", [good_xray, loopback]),
+            ("xray array bare, missing uuid", [good_xray, no_uuid]),
+            ("xray array outbounds, bad port", [{"outbounds": [good_xray, bad_port]}]),
+            ("endpoint, missing private key", {"outbounds": [good_node], "endpoints": [wg_no_key]}),
+            ("endpoint, loopback host", {"outbounds": [good_node], "endpoints": [wg_loopback]}),
+            ("endpoints only, missing private key", {"endpoints": [wg_no_key]}),
+        )
+        for label, payload in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(ParseError) as captured:
+                    _parse_profiles_detailed(json.dumps(payload))
+                # The valid sibling entry was importable, so the failure is the
+                # invalid entry's own validation error, not "nothing to import".
+                self.assertNotIn("no supported profiles", str(captured.exception))
+
+    def test_root_array_of_singbox_objects_is_not_a_supported_form(self) -> None:
+        node = self._singbox_node("sb-1", "sb1.example.com")
+        payloads = (
+            [node],
+            [{"outbounds": [node]}],
+            [{"endpoints": [self._wireguard_endpoint("wg-1", "wg1.example.com")]}],
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ParseError, "Xray JSON array contains no supported"):
+                    _parse_profiles_detailed(json.dumps(payload))
+
+    # 10 -- previously supported formats keep their results and counts.
+    def test_previously_supported_formats_are_unchanged(self) -> None:
+        plain = (
+            "vless://uuid@plain.example.com:443?encryption=none\n"
+            "\n"
+            "trojan://secret@plain2.example.com:443"
+        )
+        base64_text = base64.b64encode(
+            b"vless://uuid@b64.example.com:443?encryption=none\nnot-a-supported-uri"
+        ).decode("ascii")
+        cases = (
+            ("plaintext", plain, SubscriptionFormat.PLAINTEXT_LINK_LIST, 2, 0),
+            ("base64", base64_text, SubscriptionFormat.BASE64_LINK_LIST, 1, 1),
+            (
+                "clash",
+                SubscriptionClassificationTests.CLASH_YAML,
+                SubscriptionFormat.CLASH_YAML,
+                1,
+                0,
+            ),
+            (
+                "singbox outbounds",
+                SubscriptionClassificationTests.SINGBOX_JSON,
+                SubscriptionFormat.SINGBOX_JSON,
+                1,
+                0,
+            ),
+            (
+                "xray root object",
+                SubscriptionClassificationTests.XRAY_ROOT_JSON,
+                SubscriptionFormat.XRAY_JSON,
+                1,
+                0,
+            ),
+            (
+                "xray outbounds object",
+                SubscriptionClassificationTests.XRAY_OUTBOUNDS_JSON,
+                SubscriptionFormat.XRAY_JSON,
+                1,
+                0,
+            ),
+        )
+        for label, text, expected_format, expected_profiles, expected_rejected in cases:
+            with self.subTest(format=label):
+                result = classify_subscription_text(text)
+                self.assertIsInstance(result, IdentifiedFormat)
+                self.assertIs(result.match.format, expected_format)
+                profiles, rejected = _parse_profiles_detailed(text)
+                self.assertEqual(len(profiles), expected_profiles)
+                self.assertEqual(rejected, expected_rejected)
+
+    def test_json_array_of_uri_strings_is_never_a_link_list(self) -> None:
+        # A JSON array of URI strings is an Xray-array signature with no
+        # importable element, never a plain-text or base64 link list.
+        text = json.dumps(["vless://uuid@plain.example.com:443?encryption=none"])
+
+        result = classify_subscription_text(text)
+
+        self.assertIsInstance(result, IdentifiedFormat)
+        self.assertIs(result.match.format, SubscriptionFormat.XRAY_JSON)
+        with self.assertRaisesRegex(ParseError, "Xray JSON array contains no supported"):
+            _parse_profiles_detailed(text)
+
+    # 11 -- SIP008 stays unsupported and is not claimed by the new signatures.
+    def test_sip008_stays_unsupported_and_is_not_claimed_by_new_signatures(self) -> None:
+        sip008 = json.dumps(
+            {
+                "version": 1,
+                "servers": [
+                    {
+                        "server": "ss.example.com",
+                        "server_port": 8388,
+                        "password": "secret",
+                        "method": "aes-256-gcm",
+                    }
+                ],
+            }
+        )
+        wrapped = json.dumps([json.loads(sip008)])
+
+        self.assertIsInstance(classify_subscription_text(sip008), UnrecognizedFormat)
+        with self.assertRaises(ParseError):
+            _parse_profiles_detailed(sip008)
+        # Inside a root array the element is an Xray-array element with no
+        # importable shape: controlled failure, never a Shadowsocks import.
+        with self.assertRaisesRegex(ParseError, "Xray JSON array contains no supported"):
+            _parse_profiles_detailed(wrapped)
+        self.assertFalse(
+            any("sip008" in member.value.lower() for member in SubscriptionFormat)
+        )
+
+    # Negotiation: an array body is accepted end-to-end and redaction stays.
+    @patch("parsers.subscription._fetch")
+    def test_fetch_subscription_imports_a_root_xray_array(self, fetch_mock) -> None:
+        body = json.dumps(
+            [
+                {"outbounds": [self._xray_outbound("xr-1", "xr1.example.com")]},
+                self._xray_outbound("xr-2", "xr2.example.com"),
+            ]
+        )
+        fetch_mock.return_value = (body, {})
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual([profile.name for profile in result.profiles], ["xr-1", "xr-2"])
+        self.assertEqual(result.rejected_profiles, 0)
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_subscription_rejects_an_empty_array_in_a_controlled_way(
+        self, fetch_mock
+    ) -> None:
+        fetch_mock.return_value = ("[]", {})
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(ParseError) as captured:
+                fetch_subscription("https://example.com/secret-token")
+
+        self.assertIn("subscription negotiation failed", str(captured.exception))
+        self.assertIn("Xray JSON array contains no supported profiles", str(captured.exception))
+        self.assertNotIn("secret-token", str(captured.exception))
 
 
 class SubscriptionUserinfoTests(unittest.TestCase):
