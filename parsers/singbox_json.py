@@ -42,6 +42,32 @@ def _load_json(data: str | dict[str, Any] | list[Any]) -> dict[str, Any] | list[
     return payload
 
 
+def _is_xray_object(payload: dict[str, Any]) -> bool:
+    """True for the Xray object forms, which never carry sing-box ``endpoints``.
+
+    A root ``protocol`` key is the single-outbound form; an ``outbounds`` list
+    whose entries carry ``protocol`` and none carry ``type`` is the outbounds
+    form. For these, an unrelated ``endpoints`` key is ignored exactly as it was
+    before sing-box ``endpoints`` support, so existing Xray documents keep their
+    results and counts.
+    """
+    if "protocol" in payload:
+        return True
+    outbounds = payload.get("outbounds")
+    if not isinstance(outbounds, list):
+        return False
+    dicts = [entry for entry in outbounds if isinstance(entry, dict)]
+    return any("protocol" in entry for entry in dicts) and not any(
+        "type" in entry for entry in dicts
+    )
+
+
+def _node_array_keys(payload: dict[str, Any]) -> tuple[str, ...]:
+    if _is_xray_object(payload):
+        return ("outbounds",)
+    return SINGBOX_NODE_ARRAYS
+
+
 def _coerce_outbounds(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Collect node entries from ``outbounds`` and ``endpoints`` in that order.
 
@@ -50,7 +76,7 @@ def _coerce_outbounds(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """
     present = [
         (key, payload[key])
-        for key in SINGBOX_NODE_ARRAYS
+        for key in _node_array_keys(payload)
         if payload.get(key) is not None
     ]
     if not present:
@@ -232,7 +258,7 @@ def _count_malformed_outbounds(payload: dict[str, Any]) -> int:
     ranked as a complete, clean candidate.
     """
     malformed = 0
-    for key in SINGBOX_NODE_ARRAYS:
+    for key in _node_array_keys(payload):
         entries = payload.get(key)
         if isinstance(entries, list):
             malformed += sum(1 for entry in entries if not isinstance(entry, dict))

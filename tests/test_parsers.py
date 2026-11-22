@@ -1936,6 +1936,19 @@ class SingboxEndpointsAndXrayArrayTests(unittest.TestCase):
                 with self.assertRaisesRegex(ParseError, "Xray JSON array contains no supported"):
                     _parse_profiles_detailed(json.dumps(payload))
 
+    def test_xray_object_forms_ignore_an_unrelated_endpoints_key(self) -> None:
+        # Existing Xray documents keep their results and counts even when they
+        # carry a top-level ``endpoints`` key that is not a sing-box array.
+        outbound = self._xray_outbound("xr-1", "xr1.example.com")
+        cases = (
+            ("outbounds form, non-list endpoints", {"outbounds": [outbound], "endpoints": "n/a"}),
+            ("outbounds form, untyped endpoints", {"outbounds": [outbound], "endpoints": [{"a": 1}]}),
+            ("root outbound form, endpoints", {**outbound, "endpoints": [{"a": 1}]}),
+        )
+        for label, payload in cases:
+            with self.subTest(case=label):
+                self.assertEqual(self._names(payload), (["xr-1"], 0))
+
     # 10 -- previously supported formats keep their results and counts.
     def test_previously_supported_formats_are_unchanged(self) -> None:
         plain = (
